@@ -1,6 +1,7 @@
 local M = {}
 
 local state = {
+    notes_dir = "",
     keymaps = {
         open = "<leader>wo",
         rename = "<leader>wr",
@@ -67,12 +68,12 @@ local function wikilink_under_cursor()
     end
 end
 
---- Open the file matching `name` from the current buffer's directory tree.
+--- Open the file matching `name` from the notes directory.
 --- `name` may be a relative path (e.g. `papers/note`) for nested files.
 --- If no existing file matches, open a new note path so it can be created.
 ---@param name string
 local function open_target(name)
-    local dir = vim.fn.fnamemodify(vim.fn.expand("%:p"), ":h")
+    local dir = state.notes_dir
     for _, rel in ipairs(collect_files_recursive(dir)) do
         if strip_ext(rel) == name then
             vim.cmd("edit " .. vim.fn.fnameescape(dir .. "/" .. rel))
@@ -145,6 +146,16 @@ local function relpath_under(from_dir, to_path)
         return to_path:sub(#prefix + 1)
     end
     return nil
+end
+
+--- Return true when `path` (absolute) lives inside the configured notes dir.
+---@param path string
+---@return boolean
+local function in_notes_dir(path)
+    if path == "" or state.notes_dir == "" then
+        return false
+    end
+    return relpath_under(state.notes_dir, path) ~= nil
 end
 
 --- Find a loaded buffer whose file matches `path` (normalized comparison).
@@ -226,11 +237,10 @@ end
 
 ---@param buffer integer
 local function collect_items(buffer)
-    local filepath = vim.fn.expand("%:p")
-    if filepath == "" then
+    local dir = state.notes_dir
+    if dir == "" then
         return {}
     end
-    local dir = vim.fn.fnamemodify(filepath, ":h")
     local files = collect_files_recursive(dir)
     local items = {}
     for _, rel in ipairs(files) do
@@ -447,16 +457,14 @@ function M._rename_current(buffer)
         return
     end
     oldpath = vim.fs.normalize(oldpath)
+    if not in_notes_dir(oldpath) then
+        vim.notify("obelisk: current file is not inside the notes directory", vim.log.levels.WARN)
+        return
+    end
     local olddir = vim.fn.fnamemodify(oldpath, ":h")
     local oldbase = vim.fn.fnamemodify(oldpath, ":t:r")
     local ext = vim.fn.fnamemodify(oldpath, ":e")
-    local cwd = vim.fn.getcwd()
-    local root
-    if olddir == cwd or oldpath:sub(1, #cwd + 1) == cwd .. "/" then
-        root = cwd
-    else
-        root = olddir
-    end
+    local root = state.notes_dir
 
     vim.ui.input({
         prompt = "Rename note to: ",
@@ -510,13 +518,7 @@ end
 ---@return table[] entries { path, lnum, col, text }
 local function find_backlinks(target_path)
     local target_dir = vim.fn.fnamemodify(target_path, ":h")
-    local cwd = vim.fn.getcwd()
-    local root
-    if target_dir == cwd or target_dir:sub(1, #cwd + 1) == cwd .. "/" then
-        root = cwd
-    else
-        root = target_dir
-    end
+    local root = state.notes_dir
 
     local results = {}
     for _, fpath in ipairs(collect_ancestor_files(target_dir, root)) do
@@ -570,6 +572,10 @@ function M._backlinks(buffer)
         return
     end
     target_path = vim.fs.normalize(target_path)
+    if not in_notes_dir(target_path) then
+        vim.notify("obelisk: current file is not inside the notes directory", vim.log.levels.WARN)
+        return
+    end
     local entries = find_backlinks(target_path)
     if #entries == 0 then
         vim.notify("obelisk: no backlinks to this file", vim.log.levels.INFO)
@@ -629,6 +635,10 @@ function M.attach(buffer)
     if vim.b[buffer].obelisk_wikilink_attached then
         return
     end
+    local path = vim.api.nvim_buf_get_name(buffer)
+    if not in_notes_dir(path) then
+        return
+    end
     vim.b[buffer].obelisk_wikilink_attached = true
 
     vim.api.nvim_create_autocmd("InsertCharPre", {
@@ -676,9 +686,12 @@ function M.attach(buffer)
     end
 end
 
----@param opts? { filetypes?: string[], keymaps?: { open?: string, rename?: string, backlinks?: string } }
+---@param opts? { notes_dir?: string, filetypes?: string[], keymaps?: { open?: string, rename?: string, backlinks?: string } }
 function M.setup(opts)
     opts = opts or {}
+    if opts.notes_dir and opts.notes_dir ~= "" then
+        state.notes_dir = vim.fs.normalize(vim.fn.expand(opts.notes_dir))
+    end
     local filetypes = opts.filetypes or { "markdown" }
     if opts.keymaps ~= nil then
         if opts.keymaps.open ~= nil then

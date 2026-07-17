@@ -12,10 +12,12 @@ local M = {}
 
 ---@class obelisk.Config
 ---@field greeting string Message shown by the :Obelisk command
+---@field notes_dir string Directory where notes live; wikilink features only activate for files inside it
 ---@field wikilink obelisk.WikilinkConfig Configuration for [[ ]] wikilink completion
 
 M.defaults = {
     greeting = "hello",
+    notes_dir = vim.fn.getcwd() .. "/notes",
     wikilink = {
         enabled = true,
         filetypes = { "markdown" },

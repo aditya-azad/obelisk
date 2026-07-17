@@ -5,9 +5,9 @@ A small Neovim plugin for wiki-style note linking in Markdown.
 ## Features
 
 - **`[[ ]]` wikilink completion** — typing `[[` in insert mode opens a
-  completion menu listing the files in the current note's directory. The menu
-  is shown without pre-selecting an item, so nothing is autofilled until you
-  explicitly choose one. On confirmation the closing `]]` is added for you.
+  completion menu listing the files in the configured notes directory. The
+  menu is shown without pre-selecting an item, so nothing is autofilled until
+  you explicitly choose one. On confirmation the closing `]]` is added for you.
 - **Follow links under the cursor** — in normal mode, press the `open`
   keybinding (default `<leader>wo`) while the cursor sits anywhere inside
   `[[some note]]` to open that file. If a matching file does not exist, a new
@@ -26,6 +26,9 @@ A small Neovim plugin for wiki-style note linking in Markdown.
   entry opens the referencing file with the cursor on the link.
 - **Configurable filetypes** — wikilink completion and the keymaps are
   attached only to the filetypes you choose (defaults to `markdown`).
+- **Notes-directory scoped** — all wikilink features only activate on files
+  inside the configured `notes_dir`. Markdown files outside it are left
+  untouched, and links resolve/open relative to that directory.
 - **Named keymaps** — keybindings live under `wikilink.keymaps.<name>` so new
   ones can be added without crowding a single `keymap` option.
 - **Typed configuration** — full [vimdoc][1] / `---@class` annotations so your
@@ -71,6 +74,7 @@ All options are optional; the values below are the defaults.
 ```lua
 require("obelisk").setup({
     greeting = "hello",                       -- message shown by :Obelisk
+    notes_dir = vim.fn.getcwd() .. "/notes",  -- directory where notes live
     wikilink = {
         enabled = true,                       -- enable [[ ]] completion + follow
         filetypes = { "markdown" },           -- where the feature is active
@@ -88,6 +92,7 @@ require("obelisk").setup({
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `greeting` | `string` | `"hello"` | Text shown by the `:Obelisk` command. |
+| `notes_dir` | `string` | `vim.fn.getcwd() .. "/notes"` | Directory where notes live. Wikilink features (completion, follow, rename, backlinks) only activate on files inside this directory; `~` and relative paths are expanded/normalized. |
 | `wikilink.enabled` | `boolean` | `true` | Enable `[[ ]]` completion and link-following. |
 | `wikilink.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the wikilink features are attached. |
 | `wikilink.keymaps` | `table` | `{ open = "<leader>wo", rename = "<leader>wr", backlinks = "<leader>wb" }` | Named wikilink keybindings (see below). |
@@ -97,6 +102,9 @@ require("obelisk").setup({
 
 ## Usage
 
+- Open a file inside your `notes_dir` (e.g. `~/notes/foo.md`) — the wikilink
+  features attach automatically. Markdown files outside `notes_dir` are
+  ignored.
 - In insert mode, type `[[` — the completion menu appears; select an entry
   (or type your own text) and confirm. The `]]` is appended automatically.
 - In normal mode, place the cursor anywhere on `[[some note]]` and press

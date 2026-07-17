@@ -16,6 +16,7 @@ function M.setup(opts)
 
     if M.config.wikilink.enabled then
         wikilink.setup({
+            notes_dir = M.config.notes_dir,
             filetypes = M.config.wikilink.filetypes,
             keymaps = M.config.wikilink.keymaps,
         })
