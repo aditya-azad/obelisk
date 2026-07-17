@@ -9,7 +9,7 @@ A small Neovim plugin for wiki-style note linking in Markdown.
   menu is shown without pre-selecting an item, so nothing is autofilled until
   you explicitly choose one. On confirmation the closing `]]` is added for you.
 - **Follow links under the cursor** — in normal mode, press the `open`
-  keybinding (default `<leader>wo`) while the cursor sits anywhere inside
+  keybinding (default `<leader>wg`) while the cursor sits anywhere inside
   `[[some note]]` to open that file. If a matching file does not exist, a new
   `<name>.md` buffer is opened so the note can be created. When the cursor is
   not on a wikilink the key falls back to its normal behavior, so it never
@@ -84,7 +84,7 @@ require("obelisk").setup({
         enabled = true,                       -- enable [[ ]] completion + follow
         filetypes = { "markdown" },           -- where the feature is active
         keymaps = {
-            open = "<leader>wo",              -- open the file under the cursor
+            open = "<leader>wg",              -- open the file under the cursor
             rename = "<leader>wr",            -- rename the current file (and fix links)
             backlinks = "<leader>wb",         -- Telescope picker of files referencing this one
             new = "<leader>wn",               -- create a new note and open it
@@ -100,8 +100,8 @@ require("obelisk").setup({
 | `notes_dir` | `string` | `vim.fn.getcwd() .. "/notes"` | Directory where notes live. Wikilink features (completion, follow, rename, backlinks) only activate on files inside this directory; `~` and relative paths are expanded/normalized. |
 | `wikilink.enabled` | `boolean` | `true` | Enable `[[ ]]` completion and link-following. |
 | `wikilink.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the wikilink features are attached. |
-| `wikilink.keymaps` | `table` | `{ open = "<leader>wo", rename = "<leader>wr", backlinks = "<leader>wb", new = "<leader>wn" }` | Named wikilink keybindings (see below). |
-| `wikilink.keymaps.open` | `string` | `"<leader>wo"` | Normal-mode keybinding used to open the file under the cursor. Set to `""` to disable it. |
+| `wikilink.keymaps` | `table` | `{ open = "<leader>wg", rename = "<leader>wr", backlinks = "<leader>wb", new = "<leader>wn" }` | Named wikilink keybindings (see below). |
+| `wikilink.keymaps.open` | `string` | `"<leader>wg"` | Normal-mode keybinding used to open the file under the cursor. Set to `""` to disable it. |
 | `wikilink.keymaps.rename` | `string` | `"<leader>wr"` | Normal-mode keybinding that renames the current file and rewrites `[[ ]]` references to it. Set to `""` to disable it. |
 | `wikilink.keymaps.backlinks` | `string` | `"<leader>wb"` | Normal-mode keybinding that opens a Telescope picker of files referencing the current file via `[[ ]]`. Set to `""` to disable it. |
 | `wikilink.keymaps.new` | `string` | `"<leader>wn"` | Normal-mode keybinding that prompts for a name, creates a new note under the notes directory, and opens it. This is a global keymap (works from any buffer, not only files in `notes_dir`). Set to `""` to disable it. |
@@ -114,7 +114,7 @@ require("obelisk").setup({
 - In insert mode, type `[[` — the completion menu appears; select an entry
   (or type your own text) and confirm. The `]]` is appended automatically.
 - In normal mode, place the cursor anywhere on `[[some note]]` and press
-  `<leader>wo` (the `open` keymap) to open `some note`. If the file doesn't
+  `<leader>wg` (the `open` keymap) to open `some note`. If the file doesn't
   exist yet, it is opened as a new buffer for you to fill in.
 - In normal mode, press `<leader>wr` (the `rename` keymap) to rename the
   current file. You'll be prompted for the new name; all `[[ ]]` links pointing
