@@ -6,6 +6,7 @@ local state = {
         open = "<leader>wo",
         rename = "<leader>wr",
         backlinks = "<leader>wb",
+        new = "<leader>wn",
     },
 }
 
@@ -342,6 +343,46 @@ function M._open_under_cursor(buffer)
     if key ~= nil and key ~= "" then
         vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, true, true), "n", false)
     end
+end
+
+--- Prompt for a name, create a new note under the notes directory, and open
+--- it. The name may be a relative path (e.g. `papers/idea`); intermediate
+--- directories are created as needed. A trailing `.md` is optional. If the
+--- file already exists it is simply opened.
+function M._new_note()
+    local dir = state.notes_dir
+    if dir == "" then
+        vim.notify("obelisk: notes directory is not configured", vim.log.levels.WARN)
+        return
+    end
+    vim.ui.input({
+        prompt = "New note: ",
+    }, function(input)
+        if input == nil then
+            return
+        end
+        local name = input
+        if name:sub(-3) == ".md" then
+            name = name:sub(1, -4)
+        end
+        vim.schedule(function()
+            if name == "" then
+                vim.notify("obelisk: empty name", vim.log.levels.ERROR)
+                return
+            end
+            if name:find("[%[%]#|%\\%c]") then
+                vim.notify("obelisk: name may not contain [, ], #, |, \\ or control characters",
+                    vim.log.levels.ERROR)
+                return
+            end
+            local path = dir .. "/" .. name .. ".md"
+            local parent = vim.fn.fnamemodify(path, ":h")
+            if parent ~= "" and vim.fn.isdirectory(parent) == 0 then
+                vim.fn.mkdir(parent, "p")
+            end
+            vim.cmd("edit " .. vim.fn.fnameescape(path))
+        end)
+    end)
 end
 
 --- Collect files that may link to a file located in `target_dir`: the files
@@ -686,7 +727,7 @@ function M.attach(buffer)
     end
 end
 
----@param opts? { notes_dir?: string, filetypes?: string[], keymaps?: { open?: string, rename?: string, backlinks?: string } }
+---@param opts? { notes_dir?: string, filetypes?: string[], keymaps?: { open?: string, rename?: string, backlinks?: string, new?: string } }
 function M.setup(opts)
     opts = opts or {}
     if opts.notes_dir and opts.notes_dir ~= "" then
@@ -702,6 +743,9 @@ function M.setup(opts)
         end
         if opts.keymaps.backlinks ~= nil then
             state.keymaps.backlinks = opts.keymaps.backlinks
+        end
+        if opts.keymaps.new ~= nil then
+            state.keymaps.new = opts.keymaps.new
         end
     end
     local ft_set = {}
@@ -722,6 +766,15 @@ function M.setup(opts)
         if vim.api.nvim_buf_is_loaded(buffer) and ft_set[vim.bo[buffer].filetype] then
             M.attach(buffer)
         end
+    end
+
+    if state.keymaps.new ~= nil and state.keymaps.new ~= "" then
+        vim.keymap.set("n", state.keymaps.new, function()
+            M._new_note()
+        end, {
+            silent = true,
+            desc = "Obelisk: create a new note and open it",
+        })
     end
 end
 

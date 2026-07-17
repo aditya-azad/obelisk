@@ -24,6 +24,12 @@ A small Neovim plugin for wiki-style note linking in Markdown.
   picker listing every file that references the current file via `[[ ]]`
   (including `[[name#anchor]]` and `[[name|alias]]` forms). Selecting an
   entry opens the referencing file with the cursor on the link.
+- **Create notes** — press the `new` keybinding (default `<leader>wn`) to be
+  prompted for a name, create a new `<name>.md` under the notes directory,
+  and open it. Unlike the other keymaps this one is global, so it works from
+  any buffer — not only files inside `notes_dir`. The name may be a relative
+  path (e.g. `papers/idea`); nested directories are created as needed. If the
+  file already exists it is simply opened.
 - **Configurable filetypes** — wikilink completion and the keymaps are
   attached only to the filetypes you choose (defaults to `markdown`).
 - **Notes-directory scoped** — all wikilink features only activate on files
@@ -81,6 +87,7 @@ require("obelisk").setup({
             open = "<leader>wo",              -- open the file under the cursor
             rename = "<leader>wr",            -- rename the current file (and fix links)
             backlinks = "<leader>wb",         -- Telescope picker of files referencing this one
+            new = "<leader>wn",               -- create a new note and open it
         },
     },
 })
@@ -93,10 +100,11 @@ require("obelisk").setup({
 | `notes_dir` | `string` | `vim.fn.getcwd() .. "/notes"` | Directory where notes live. Wikilink features (completion, follow, rename, backlinks) only activate on files inside this directory; `~` and relative paths are expanded/normalized. |
 | `wikilink.enabled` | `boolean` | `true` | Enable `[[ ]]` completion and link-following. |
 | `wikilink.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the wikilink features are attached. |
-| `wikilink.keymaps` | `table` | `{ open = "<leader>wo", rename = "<leader>wr", backlinks = "<leader>wb" }` | Named wikilink keybindings (see below). |
+| `wikilink.keymaps` | `table` | `{ open = "<leader>wo", rename = "<leader>wr", backlinks = "<leader>wb", new = "<leader>wn" }` | Named wikilink keybindings (see below). |
 | `wikilink.keymaps.open` | `string` | `"<leader>wo"` | Normal-mode keybinding used to open the file under the cursor. Set to `""` to disable it. |
 | `wikilink.keymaps.rename` | `string` | `"<leader>wr"` | Normal-mode keybinding that renames the current file and rewrites `[[ ]]` references to it. Set to `""` to disable it. |
 | `wikilink.keymaps.backlinks` | `string` | `"<leader>wb"` | Normal-mode keybinding that opens a Telescope picker of files referencing the current file via `[[ ]]`. Set to `""` to disable it. |
+| `wikilink.keymaps.new` | `string` | `"<leader>wn"` | Normal-mode keybinding that prompts for a name, creates a new note under the notes directory, and opens it. This is a global keymap (works from any buffer, not only files in `notes_dir`). Set to `""` to disable it. |
 
 ## Usage
 
@@ -114,3 +122,8 @@ require("obelisk").setup({
 - In normal mode, press `<leader>wb` (the `backlinks` keymap) to open a
   Telescope picker of files referencing the current file. Selecting an entry
   opens that file with the cursor placed on the referencing `[[ ]]` link.
+- In normal mode, press `<leader>wn` (the `new` keymap) to create a new note.
+  This works from any buffer. You'll be prompted for a name; the note is
+  created under the notes directory (nested paths like `papers/idea` are
+  supported) and opened for editing. If a file with that name already exists
+  it is opened instead.
