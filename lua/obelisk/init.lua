@@ -15,7 +15,10 @@ function M.setup(opts)
     end, { desc = "Obelisk demo command" })
 
     if M.config.wikilink.enabled then
-        wikilink.setup({ filetypes = M.config.wikilink.filetypes })
+        wikilink.setup({
+            filetypes = M.config.wikilink.filetypes,
+            keymaps = M.config.wikilink.keymaps,
+        })
     end
 end
 

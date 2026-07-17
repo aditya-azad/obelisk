@@ -1,7 +1,60 @@
 local M = {}
 
+local state = {
+    keymaps = {
+        open = "<leader>wo",
+    },
+}
+
 local function strip_ext(name)
     return vim.fn.fnamemodify(name, ":r")
+end
+
+--- Return the link target under the cursor when it sits within `[[ ]]`.
+---@return string|nil
+local function wikilink_under_cursor()
+    local line = vim.fn.getline(".")
+    local col = vim.fn.col(".")
+    local start = 1
+    while true do
+        local s, e = line:find("%[%[", start)
+        if not s then
+            return nil
+        end
+        local s2 = line:find("%]%]", e + 1)
+        if not s2 then
+            return nil
+        end
+        if col >= s and col <= s2 + 1 then
+            local text = line:sub(e + 1, s2 - 1)
+            local anchor = text:find("#")
+            if anchor then
+                text = text:sub(1, anchor - 1)
+            end
+            return text
+        end
+        start = s2 + 2
+    end
+end
+
+--- Open the file matching `name` from the current buffer's directory.
+--- If no existing file matches, open a new note path so it can be created.
+---@param name string
+local function open_target(name)
+    local dir = vim.fn.fnamemodify(vim.fn.expand("%:p"), ":h")
+    local entries = vim.fn.readdir(dir)
+    if entries then
+        table.sort(entries)
+        for _, entry in ipairs(entries) do
+            local full = dir .. "/" .. entry
+            if vim.fn.isdirectory(full) == 0 and strip_ext(entry) == name then
+                vim.cmd("edit " .. vim.fn.fnameescape(full))
+                return
+            end
+        end
+    end
+    local path = dir .. "/" .. name .. ".md"
+    vim.cmd("edit " .. vim.fn.fnameescape(path))
 end
 
 ---@param buffer integer
@@ -81,6 +134,24 @@ function M._complete_done(buffer)
     vim.fn.feedkeys("]]", "n")
 end
 
+--- Open the wikilink under the cursor; fall back to the key's default
+--- action when the cursor is not inside `[[ ]]`.
+---@param buffer integer
+function M._open_under_cursor(buffer)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return
+    end
+    local name = wikilink_under_cursor()
+    if name and name ~= "" then
+        open_target(name)
+        return
+    end
+    local key = state.keymaps.open
+    if key ~= nil and key ~= "" then
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, true, true), "n", false)
+    end
+end
+
 ---@param buffer integer
 function M.attach(buffer)
     if not vim.api.nvim_buf_is_valid(buffer) then
@@ -104,12 +175,27 @@ function M.attach(buffer)
             M._complete_done(buffer)
         end,
     })
+
+    if state.keymaps.open ~= nil and state.keymaps.open ~= "" then
+        vim.keymap.set("n", state.keymaps.open, function()
+            M._open_under_cursor(buffer)
+        end, {
+            buffer = buffer,
+            silent = true,
+            desc = "Obelisk: open wikilink under cursor",
+        })
+    end
 end
 
----@param opts? { filetypes?: string[] }
+---@param opts? { filetypes?: string[], keymaps?: { open?: string } }
 function M.setup(opts)
     opts = opts or {}
     local filetypes = opts.filetypes or { "markdown" }
+    if opts.keymaps ~= nil then
+        if opts.keymaps.open ~= nil then
+            state.keymaps.open = opts.keymaps.open
+        end
+    end
     local ft_set = {}
     for _, ft in ipairs(filetypes) do
         ft_set[ft] = true
