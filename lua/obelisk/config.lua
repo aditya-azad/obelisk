@@ -2,6 +2,7 @@ local M = {}
 
 ---@class obelisk.WikilinkKeymaps
 ---@field open string Keybinding (normal mode) that opens the file under the cursor when it sits inside [[ ]]
+---@field rename string Keybinding (normal mode) that renames the current file and updates [[ ]] references to it
 
 ---@class obelisk.WikilinkConfig
 ---@field enabled boolean Enable [[ ]] file-name completion
@@ -19,6 +20,7 @@ M.defaults = {
         filetypes = { "markdown" },
         keymaps = {
             open = "<leader>wo",
+            rename = "<leader>wr",
         },
     },
 }

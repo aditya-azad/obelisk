@@ -3,11 +3,40 @@ local M = {}
 local state = {
     keymaps = {
         open = "<leader>wo",
+        rename = "<leader>wr",
     },
 }
 
 local function strip_ext(name)
     return vim.fn.fnamemodify(name, ":r")
+end
+
+--- Recursively collect files under `dir`, returning their paths relative to
+--- `dir` (e.g. `papers/note.md`). Directories themselves are not included.
+---@param dir string
+---@return string[]
+local function collect_files_recursive(dir)
+    local result = {}
+    local function walk(current_dir, prefix)
+        local entries = vim.fn.readdir(current_dir)
+        if not entries then
+            return
+        end
+        table.sort(entries)
+        for _, entry in ipairs(entries) do
+            if entry ~= "." and entry ~= ".." then
+                local full = current_dir .. "/" .. entry
+                local rel = prefix == "" and entry or (prefix .. "/" .. entry)
+                if vim.fn.isdirectory(full) == 0 then
+                    result[#result + 1] = rel
+                else
+                    walk(full, rel)
+                end
+            end
+        end
+    end
+    walk(dir, "")
+    return result
 end
 
 --- Return the link target under the cursor when it sits within `[[ ]]`.
@@ -37,24 +66,161 @@ local function wikilink_under_cursor()
     end
 end
 
---- Open the file matching `name` from the current buffer's directory.
+--- Open the file matching `name` from the current buffer's directory tree.
+--- `name` may be a relative path (e.g. `papers/note`) for nested files.
 --- If no existing file matches, open a new note path so it can be created.
 ---@param name string
 local function open_target(name)
     local dir = vim.fn.fnamemodify(vim.fn.expand("%:p"), ":h")
-    local entries = vim.fn.readdir(dir)
-    if entries then
-        table.sort(entries)
-        for _, entry in ipairs(entries) do
-            local full = dir .. "/" .. entry
-            if vim.fn.isdirectory(full) == 0 and strip_ext(entry) == name then
-                vim.cmd("edit " .. vim.fn.fnameescape(full))
-                return
-            end
+    for _, rel in ipairs(collect_files_recursive(dir)) do
+        if strip_ext(rel) == name then
+            vim.cmd("edit " .. vim.fn.fnameescape(dir .. "/" .. rel))
+            return
         end
     end
     local path = dir .. "/" .. name .. ".md"
     vim.cmd("edit " .. vim.fn.fnameescape(path))
+end
+
+--- Split a wikilink's inner text into its target and the trailing remainder
+--- (e.g. `#anchor`, `|alias`, or `#anchor|alias`). The target ends at the
+--- first `#` or `|`.
+---@param inner string
+---@return string target, string rest
+local function split_link_target(inner)
+    local h = inner:find("#", 1, true)
+    local p = inner:find("|", 1, true)
+    local cut
+    if h and p then
+        cut = math.min(h, p)
+    elseif h then
+        cut = h
+    elseif p then
+        cut = p
+    end
+    if cut then
+        return inner:sub(1, cut - 1), inner:sub(cut)
+    end
+    return inner, ""
+end
+
+--- Replace every `[[expected]]`, `[[expected#anchor]]` and
+--- `[[expected|alias]]` occurrence in `line` with `newexpected`, preserving
+--- the anchor/alias portion. Returns the new text and the replacement count.
+---@param line string
+---@param expected string
+---@param newexpected string
+---@return string, integer
+local function replace_wikilink_target(line, expected, newexpected)
+    if expected == newexpected or expected == "" then
+        return line, 0
+    end
+    local count = 0
+    local result = line:gsub("%[%[([^%]]*)%]%]", function(inner)
+        local target, rest = split_link_target(inner)
+        if target == expected then
+            count = count + 1
+            return "[[" .. newexpected .. rest .. "]]"
+        end
+        return nil
+    end)
+    return result, count
+end
+
+--- Return the path of `to_path` relative to the directory `from_dir`,
+--- assuming `from_dir` is an ancestor of (or equal to) `to_path`'s directory.
+--- Returns nil when `to_path` is not under `from_dir`.
+---@param from_dir string
+---@param to_path string
+---@return string|nil
+local function relpath_under(from_dir, to_path)
+    from_dir = vim.fs.normalize(from_dir)
+    to_path = vim.fs.normalize(to_path)
+    if from_dir == "/" then
+        return to_path:sub(2)
+    end
+    local prefix = from_dir .. "/"
+    if to_path:sub(1, #prefix) == prefix then
+        return to_path:sub(#prefix + 1)
+    end
+    return nil
+end
+
+--- Find a loaded buffer whose file matches `path` (normalized comparison).
+---@param path string
+---@return integer|nil
+local function find_buf_for_path(path)
+    local norm = vim.fs.normalize(path)
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(b) then
+            local name = vim.api.nvim_buf_get_name(b)
+            if name ~= "" and vim.fs.normalize(name) == norm then
+                return b
+            end
+        end
+    end
+    return nil
+end
+
+--- Update every `[[ ]]` reference to `oldpath` within `fpath` so it points at
+--- `newpath`. Loaded buffers are edited in memory (and saved); other files are
+--- rewritten on disk. Returns `(files_changed, refs_changed)`.
+---@param fpath string
+---@param oldpath string
+---@param newpath string
+---@return integer, integer
+local function update_references_in_file(fpath, oldpath, newpath)
+    local d = vim.fn.fnamemodify(fpath, ":h")
+    local rel = relpath_under(d, oldpath)
+    if not rel then
+        return 0, 0
+    end
+    local expected = strip_ext(rel)
+    local newrel = relpath_under(d, newpath)
+    if not newrel then
+        return 0, 0
+    end
+    local newexpected = strip_ext(newrel)
+
+    local buf = find_buf_for_path(fpath)
+    if buf and vim.api.nvim_buf_is_loaded(buf) then
+        local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+        local changed = false
+        local refs = 0
+        for i, line in ipairs(lines) do
+            local newline, n = replace_wikilink_target(line, expected, newexpected)
+            if n > 0 then
+                lines[i] = newline
+                changed = true
+                refs = refs + n
+            end
+        end
+        if changed then
+            vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+            vim.api.nvim_buf_call(buf, function()
+                vim.cmd("silent! write")
+            end)
+            return 1, refs
+        end
+        return 0, 0
+    end
+
+    local f = io.open(fpath, "rb")
+    if not f then
+        return 0, 0
+    end
+    local content = f:read("*a")
+    f:close()
+    local newcontent, refs = replace_wikilink_target(content, expected, newexpected)
+    if refs > 0 then
+        local f2 = io.open(fpath, "wb")
+        if f2 then
+            f2:write(newcontent)
+            f2:close()
+        end
+        return 1, refs
+    end
+    return 0, 0
 end
 
 ---@param buffer integer
@@ -64,23 +230,14 @@ local function collect_items(buffer)
         return {}
     end
     local dir = vim.fn.fnamemodify(filepath, ":h")
-    local entries = vim.fn.readdir(dir)
-    if not entries then
-        return {}
-    end
-    table.sort(entries)
+    local files = collect_files_recursive(dir)
     local items = {}
-    for _, entry in ipairs(entries) do
-        if entry ~= "." and entry ~= ".." then
-            local full = dir .. "/" .. entry
-            if vim.fn.isdirectory(full) == 0 then
-                items[#items + 1] = {
-                    word = strip_ext(entry),
-                    abbr = entry,
-                    dup = 1,
-                }
-            end
-        end
+    for _, rel in ipairs(files) do
+        items[#items + 1] = {
+            word = strip_ext(rel),
+            abbr = rel,
+            dup = 1,
+        }
     end
     return items
 end
@@ -176,6 +333,135 @@ function M._open_under_cursor(buffer)
     end
 end
 
+--- Perform the rename of `oldpath` to a new basename `newbase`, rewriting
+--- `[[ ]]` references across the note tree.
+---@param buffer integer
+---@param oldpath string
+---@param oldbase string
+---@param ext string
+---@param root string
+---@param newbase string
+local function do_rename(buffer, oldpath, oldbase, ext, root, newbase)
+    if newbase == "" then
+        vim.notify("obelisk: empty name", vim.log.levels.ERROR)
+        return
+    end
+    if newbase:find("[%[/\\%]#|%c]") then
+        vim.notify("obelisk: name may not contain /, \\, [, ], #, | or control characters",
+            vim.log.levels.ERROR)
+        return
+    end
+    if newbase == oldbase then
+        vim.notify("obelisk: name unchanged", vim.log.levels.WARN)
+        return
+    end
+
+    local olddir = vim.fn.fnamemodify(oldpath, ":h")
+    local newpath = olddir .. "/" .. newbase .. (ext ~= "" and "." .. ext or "")
+    if vim.fn.filereadable(newpath) == 1 or vim.fn.isdirectory(newpath) == 1 then
+        vim.notify("obelisk: a file already exists at " .. newpath, vim.log.levels.ERROR)
+        return
+    end
+
+    -- Collect candidate files: the files sitting directly in each directory
+    -- on the path from the current file's directory up to the tree root. With
+    -- the plugin's relative-to-current-dir resolution, only files in an
+    -- ancestor-or-equal directory can link to the renamed file.
+    local files = {}
+    local d = olddir
+    while true do
+        local entries = vim.fn.readdir(d)
+        if entries then
+            for _, entry in ipairs(entries) do
+                if entry ~= "." and entry ~= ".." then
+                    local full = d .. "/" .. entry
+                    if vim.fn.isdirectory(full) == 0 then
+                        files[#files + 1] = full
+                    end
+                end
+            end
+        end
+        if d == root then
+            break
+        end
+        local parent = vim.fn.fnamemodify(d, ":h")
+        if parent == d then
+            break
+        end
+        d = parent
+    end
+
+    local files_changed = 0
+    local refs_changed = 0
+    for _, fpath in ipairs(files) do
+        local fc, rc = update_references_in_file(fpath, oldpath, newpath)
+        files_changed = files_changed + fc
+        refs_changed = refs_changed + rc
+    end
+
+    -- Rename the file itself: persist the current buffer, move it on disk,
+    -- then rebind the buffer to the new path.
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return
+    end
+    vim.api.nvim_buf_call(buffer, function()
+        vim.cmd("silent! write")
+    end)
+    local ok, err = os.rename(oldpath, newpath)
+    if not ok then
+        vim.notify("obelisk: rename failed: " .. tostring(err), vim.log.levels.ERROR)
+        return
+    end
+    vim.api.nvim_buf_call(buffer, function()
+        vim.cmd("silent! saveas! " .. vim.fn.fnameescape(newpath))
+    end)
+
+    vim.notify(string.format("obelisk: renamed %s -> %s (%d reference%s in %d file%s)",
+        oldbase, newbase, refs_changed, refs_changed == 1 and "" or "s",
+        files_changed, files_changed == 1 and "" or "s"), vim.log.levels.INFO)
+end
+
+--- Prompt for a new name and rename the current file, updating `[[ ]]`
+--- references to it across the note tree.
+---@param buffer integer
+function M._rename_current(buffer)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return
+    end
+    local oldpath = vim.fn.expand("%:p")
+    if oldpath == "" then
+        vim.notify("obelisk: current buffer has no file to rename", vim.log.levels.WARN)
+        return
+    end
+    oldpath = vim.fs.normalize(oldpath)
+    local olddir = vim.fn.fnamemodify(oldpath, ":h")
+    local oldbase = vim.fn.fnamemodify(oldpath, ":t:r")
+    local ext = vim.fn.fnamemodify(oldpath, ":e")
+    local cwd = vim.fn.getcwd()
+    local root
+    if olddir == cwd or oldpath:sub(1, #cwd + 1) == cwd .. "/" then
+        root = cwd
+    else
+        root = olddir
+    end
+
+    vim.ui.input({
+        prompt = "Rename note to: ",
+        default = oldbase,
+    }, function(input)
+        if input == nil then
+            return
+        end
+        local newbase = input
+        if ext ~= "" and newbase:sub(-(#ext + 1)) == "." .. ext then
+            newbase = newbase:sub(1, -(#ext + 2))
+        end
+        vim.schedule(function()
+            do_rename(buffer, oldpath, oldbase, ext, root, newbase)
+        end)
+    end)
+end
+
 ---@param buffer integer
 function M.attach(buffer)
     if not vim.api.nvim_buf_is_valid(buffer) then
@@ -209,15 +495,28 @@ function M.attach(buffer)
             desc = "Obelisk: open wikilink under cursor",
         })
     end
+
+    if state.keymaps.rename ~= nil and state.keymaps.rename ~= "" then
+        vim.keymap.set("n", state.keymaps.rename, function()
+            M._rename_current(buffer)
+        end, {
+            buffer = buffer,
+            silent = true,
+            desc = "Obelisk: rename current file and update wikilinks",
+        })
+    end
 end
 
----@param opts? { filetypes?: string[], keymaps?: { open?: string } }
+---@param opts? { filetypes?: string[], keymaps?: { open?: string, rename?: string } }
 function M.setup(opts)
     opts = opts or {}
     local filetypes = opts.filetypes or { "markdown" }
     if opts.keymaps ~= nil then
         if opts.keymaps.open ~= nil then
             state.keymaps.open = opts.keymaps.open
+        end
+        if opts.keymaps.rename ~= nil then
+            state.keymaps.rename = opts.keymaps.rename
         end
     end
     local ft_set = {}

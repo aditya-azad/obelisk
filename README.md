@@ -16,6 +16,9 @@ A small Neovim plugin for wiki-style note linking in Markdown.
   shadows your editor.
 - **Anchor stripping** — link targets of the form `[[note#heading]]` resolve
   to the file `note`, ignoring the `#heading` portion when opening.
+- **Rename notes** — press the `rename` keybinding (default `<leader>wr`) to
+  rename the current file. Every `[[ ]]` reference to it across the note tree
+  is rewritten to the new name (anchors and aliases are preserved).
 - **Configurable filetypes** — wikilink completion and the keymaps are
   attached only to the filetypes you choose (defaults to `markdown`).
 - **Named keymaps** — keybindings live under `wikilink.keymaps.<name>` so new
@@ -65,6 +68,7 @@ require("obelisk").setup({
         filetypes = { "markdown" },           -- where the feature is active
         keymaps = {
             open = "<leader>wo",              -- open the file under the cursor
+            rename = "<leader>wr",            -- rename the current file (and fix links)
         },
     },
 })
@@ -77,8 +81,9 @@ require("obelisk").setup({
 | `greeting` | `string` | `"hello"` | Text shown by the `:Obelisk` command. |
 | `wikilink.enabled` | `boolean` | `true` | Enable `[[ ]]` completion and link-following. |
 | `wikilink.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the wikilink features are attached. |
-| `wikilink.keymaps` | `table` | `{ open = "<leader>wo" }` | Named wikilink keybindings (see below). |
+| `wikilink.keymaps` | `table` | `{ open = "<leader>wo", rename = "<leader>wr" }` | Named wikilink keybindings (see below). |
 | `wikilink.keymaps.open` | `string` | `"<leader>wo"` | Normal-mode keybinding used to open the file under the cursor. Set to `""` to disable it. |
+| `wikilink.keymaps.rename` | `string` | `"<leader>wr"` | Normal-mode keybinding that renames the current file and rewrites `[[ ]]` references to it. Set to `""` to disable it. |
 
 ## Usage
 
@@ -87,5 +92,8 @@ require("obelisk").setup({
 - In normal mode, place the cursor anywhere on `[[some note]]` and press
   `<leader>wo` (the `open` keymap) to open `some note`. If the file doesn't
   exist yet, it is opened as a new buffer for you to fill in.
+- In normal mode, press `<leader>wr` (the `rename` keymap) to rename the
+  current file. You'll be prompted for the new name; all `[[ ]]` links pointing
+  to it are updated (including `[[name#anchor]]` and `[[name|alias]]` forms).
 - Run `:Obelisk` to print the configured `greeting` (handy for verifying that
   setup ran).
