@@ -73,7 +73,6 @@ All options are optional; the values below are the defaults.
 
 ```lua
 require("obelisk").setup({
-    greeting = "hello",                       -- message shown by :Obelisk
     notes_dir = vim.fn.getcwd() .. "/notes",  -- directory where notes live
     wikilink = {
         enabled = true,                       -- enable [[ ]] completion + follow
@@ -91,7 +90,6 @@ require("obelisk").setup({
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `greeting` | `string` | `"hello"` | Text shown by the `:Obelisk` command. |
 | `notes_dir` | `string` | `vim.fn.getcwd() .. "/notes"` | Directory where notes live. Wikilink features (completion, follow, rename, backlinks) only activate on files inside this directory; `~` and relative paths are expanded/normalized. |
 | `wikilink.enabled` | `boolean` | `true` | Enable `[[ ]]` completion and link-following. |
 | `wikilink.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the wikilink features are attached. |
@@ -116,5 +114,3 @@ require("obelisk").setup({
 - In normal mode, press `<leader>wb` (the `backlinks` keymap) to open a
   Telescope picker of files referencing the current file. Selecting an entry
   opens that file with the cursor placed on the referencing `[[ ]]` link.
-- Run `:Obelisk` to print the configured `greeting` (handy for verifying that
-  setup ran).
