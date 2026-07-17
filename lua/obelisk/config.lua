@@ -5,6 +5,7 @@ local M = {}
 ---@field rename string Keybinding (normal mode) that renames the current file and updates [[ ]] references to it
 ---@field backlinks string Keybinding (normal mode) that opens a Telescope picker listing files referencing the current file via [[ ]]
 ---@field new string Keybinding (normal mode) that prompts for a name, creates a new note under the notes directory, and opens it
+---@field find string Keybinding (normal mode) that opens a Telescope picker listing every note under the notes directory for quick opening
 
 ---@class obelisk.WikilinkConfig
 ---@field enabled boolean Enable [[ ]] file-name completion
@@ -25,6 +26,7 @@ M.defaults = {
             rename = "<leader>wr",
             backlinks = "<leader>wb",
             new = "<leader>wn",
+            find = "<leader>wo",
         },
     },
 }

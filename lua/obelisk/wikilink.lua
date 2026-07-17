@@ -7,6 +7,7 @@ local state = {
         rename = "<leader>wr",
         backlinks = "<leader>wb",
         new = "<leader>wn",
+        find = "<leader>wo",
     },
 }
 
@@ -385,6 +386,61 @@ function M._new_note()
     end)
 end
 
+--- Open a Telescope picker listing every note under the notes directory.
+--- Selecting an entry opens that note. This is a global action and works
+--- from any buffer — not only files inside `notes_dir`.
+function M._find_note()
+    local dir = state.notes_dir
+    if dir == "" then
+        vim.notify("obelisk: notes directory is not configured", vim.log.levels.WARN)
+        return
+    end
+    local files = collect_files_recursive(dir)
+    if #files == 0 then
+        vim.notify("obelisk: no notes found in " .. dir, vim.log.levels.INFO)
+        return
+    end
+
+    local ok, pickers = pcall(require, "telescope.pickers")
+    if not ok then
+        vim.notify("obelisk: telescope.nvim is required to find notes", vim.log.levels.ERROR)
+        return
+    end
+    local finders = require("telescope.finders")
+    local conf = require("telescope.config").values
+    local actions = require("telescope.actions")
+    local action_state = require("telescope.actions.state")
+
+    pickers.new({}, {
+        prompt_title = "Obelisk Notes",
+        finder = finders.new_table({
+            results = files,
+            entry_maker = function(rel)
+                local path = dir .. "/" .. rel
+                return {
+                    value = rel,
+                    display = rel,
+                    ordinal = rel,
+                    filename = path,
+                    path = path,
+                }
+            end,
+        }),
+        previewer = conf.file_previewer({}),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr, _)
+            actions.select_default:replace(function()
+                local selection = action_state.get_selected_entry()
+                actions.close(prompt_bufnr)
+                if selection then
+                    vim.cmd("edit " .. vim.fn.fnameescape(selection.path))
+                end
+            end)
+            return true
+        end,
+    }):find()
+end
+
 --- Collect files that may link to a file located in `target_dir`: the files
 --- sitting directly in each directory from `target_dir` up to (and including)
 --- `root`. With the plugin's relative-to-current-dir resolution, only files
@@ -727,7 +783,7 @@ function M.attach(buffer)
     end
 end
 
----@param opts? { notes_dir?: string, filetypes?: string[], keymaps?: { open?: string, rename?: string, backlinks?: string, new?: string } }
+---@param opts? { notes_dir?: string, filetypes?: string[], keymaps?: { open?: string, rename?: string, backlinks?: string, new?: string, find?: string } }
 function M.setup(opts)
     opts = opts or {}
     if opts.notes_dir and opts.notes_dir ~= "" then
@@ -746,6 +802,9 @@ function M.setup(opts)
         end
         if opts.keymaps.new ~= nil then
             state.keymaps.new = opts.keymaps.new
+        end
+        if opts.keymaps.find ~= nil then
+            state.keymaps.find = opts.keymaps.find
         end
     end
     local ft_set = {}
@@ -774,6 +833,15 @@ function M.setup(opts)
         end, {
             silent = true,
             desc = "Obelisk: create a new note and open it",
+        })
+    end
+
+    if state.keymaps.find ~= nil and state.keymaps.find ~= "" then
+        vim.keymap.set("n", state.keymaps.find, function()
+            M._find_note()
+        end, {
+            silent = true,
+            desc = "Obelisk: find and open a note with Telescope",
         })
     end
 end
