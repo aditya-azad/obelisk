@@ -4,6 +4,7 @@ local state = {
     keymaps = {
         open = "<leader>wo",
         rename = "<leader>wr",
+        backlinks = "<leader>wb",
     },
 }
 
@@ -333,6 +334,40 @@ function M._open_under_cursor(buffer)
     end
 end
 
+--- Collect files that may link to a file located in `target_dir`: the files
+--- sitting directly in each directory from `target_dir` up to (and including)
+--- `root`. With the plugin's relative-to-current-dir resolution, only files
+--- in an ancestor-or-equal directory can link to the target file.
+---@param target_dir string
+---@param root string
+---@return string[]
+local function collect_ancestor_files(target_dir, root)
+    local files = {}
+    local d = target_dir
+    while true do
+        local entries = vim.fn.readdir(d)
+        if entries then
+            for _, entry in ipairs(entries) do
+                if entry ~= "." and entry ~= ".." then
+                    local full = d .. "/" .. entry
+                    if vim.fn.isdirectory(full) == 0 then
+                        files[#files + 1] = full
+                    end
+                end
+            end
+        end
+        if d == root then
+            break
+        end
+        local parent = vim.fn.fnamemodify(d, ":h")
+        if parent == d then
+            break
+        end
+        d = parent
+    end
+    return files
+end
+
 --- Perform the rename of `oldpath` to a new basename `newbase`, rewriting
 --- `[[ ]]` references across the note tree.
 ---@param buffer integer
@@ -367,29 +402,7 @@ local function do_rename(buffer, oldpath, oldbase, ext, root, newbase)
     -- on the path from the current file's directory up to the tree root. With
     -- the plugin's relative-to-current-dir resolution, only files in an
     -- ancestor-or-equal directory can link to the renamed file.
-    local files = {}
-    local d = olddir
-    while true do
-        local entries = vim.fn.readdir(d)
-        if entries then
-            for _, entry in ipairs(entries) do
-                if entry ~= "." and entry ~= ".." then
-                    local full = d .. "/" .. entry
-                    if vim.fn.isdirectory(full) == 0 then
-                        files[#files + 1] = full
-                    end
-                end
-            end
-        end
-        if d == root then
-            break
-        end
-        local parent = vim.fn.fnamemodify(d, ":h")
-        if parent == d then
-            break
-        end
-        d = parent
-    end
+    local files = collect_ancestor_files(olddir, root)
 
     local files_changed = 0
     local refs_changed = 0
@@ -462,6 +475,152 @@ function M._rename_current(buffer)
     end)
 end
 
+--- Find positions of `[[ ]]` links in `line` whose target equals `expected`.
+---@param line string
+---@param expected string
+---@return table[] matches { col = 1-based byte index of "[[" }
+local function find_wikilink_matches(line, expected)
+    local matches = {}
+    local start = 1
+    while true do
+        local s, e = line:find("%[%[", start)
+        if not s then
+            break
+        end
+        local s2 = line:find("%]%]", e + 1)
+        if not s2 then
+            break
+        end
+        local inner = line:sub(e + 1, s2 - 1)
+        local target = split_link_target(inner)
+        if target == expected then
+            matches[#matches + 1] = { col = s }
+        end
+        start = s2 + 2
+    end
+    return matches
+end
+
+--- Find every file that references `target_path` via a `[[ ]]` link. A file at
+--- `fpath` references `target_path` when it contains a wikilink whose target
+--- (the text before `#` or `|`) equals the extension-less path of
+--- `target_path` relative to `fpath`'s directory. Loaded buffers are read
+--- in-memory so unsaved edits are reflected.
+---@param target_path string Absolute, normalized path.
+---@return table[] entries { path, lnum, col, text }
+local function find_backlinks(target_path)
+    local target_dir = vim.fn.fnamemodify(target_path, ":h")
+    local cwd = vim.fn.getcwd()
+    local root
+    if target_dir == cwd or target_dir:sub(1, #cwd + 1) == cwd .. "/" then
+        root = cwd
+    else
+        root = target_dir
+    end
+
+    local results = {}
+    for _, fpath in ipairs(collect_ancestor_files(target_dir, root)) do
+        if vim.fs.normalize(fpath) ~= target_path then
+            local fdir = vim.fn.fnamemodify(fpath, ":h")
+            local rel = relpath_under(fdir, target_path)
+            if rel then
+                local expected = strip_ext(rel)
+                if expected ~= "" then
+                    local lines = nil
+                    local buf = find_buf_for_path(fpath)
+                    if buf and vim.api.nvim_buf_is_loaded(buf) then
+                        lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+                    else
+                        local f = io.open(fpath, "r")
+                        if f then
+                            local content = f:read("*a")
+                            f:close()
+                            lines = vim.split(content, "\r?\n")
+                        end
+                    end
+                    if lines then
+                        for i, line in ipairs(lines) do
+                            for _, m in ipairs(find_wikilink_matches(line, expected)) do
+                                results[#results + 1] = {
+                                    path = fpath,
+                                    lnum = i,
+                                    col = m.col,
+                                    text = line,
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return results
+end
+
+--- Open a Telescope picker listing files that reference the current file via
+--- `[[ ]]`. Selecting an entry opens the referencing file at the link.
+---@param buffer integer
+function M._backlinks(buffer)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return
+    end
+    local target_path = vim.fn.expand("%:p")
+    if target_path == "" then
+        vim.notify("obelisk: current buffer has no file", vim.log.levels.WARN)
+        return
+    end
+    target_path = vim.fs.normalize(target_path)
+    local entries = find_backlinks(target_path)
+    if #entries == 0 then
+        vim.notify("obelisk: no backlinks to this file", vim.log.levels.INFO)
+        return
+    end
+
+    local ok, pickers = pcall(require, "telescope.pickers")
+    if not ok then
+        vim.notify("obelisk: telescope.nvim is required for backlinks", vim.log.levels.ERROR)
+        return
+    end
+    local finders = require("telescope.finders")
+    local conf = require("telescope.config").values
+    local actions = require("telescope.actions")
+    local action_state = require("telescope.actions.state")
+
+    pickers.new({}, {
+        prompt_title = "Obelisk Backlinks",
+        finder = finders.new_table({
+            results = entries,
+            entry_maker = function(entry)
+                local disp = string.format("%s:%d: %s",
+                    vim.fn.fnamemodify(entry.path, ":."), entry.lnum,
+                    (entry.text:gsub("^%s+", "")))
+                return {
+                    value = entry,
+                    display = disp,
+                    ordinal = disp,
+                    filename = entry.path,
+                    lnum = entry.lnum,
+                    col = entry.col,
+                }
+            end,
+        }),
+        previewer = conf.grep_previewer({}),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr, _)
+            actions.select_default:replace(function()
+                local selection = action_state.get_selected_entry()
+                actions.close(prompt_bufnr)
+                if selection then
+                    local e = selection.value
+                    vim.cmd("edit " .. vim.fn.fnameescape(e.path))
+                    vim.api.nvim_win_set_cursor(0, { e.lnum, math.max(0, e.col - 1) })
+                end
+            end)
+            return true
+        end,
+    }):find()
+end
+
 ---@param buffer integer
 function M.attach(buffer)
     if not vim.api.nvim_buf_is_valid(buffer) then
@@ -505,9 +664,19 @@ function M.attach(buffer)
             desc = "Obelisk: rename current file and update wikilinks",
         })
     end
+
+    if state.keymaps.backlinks ~= nil and state.keymaps.backlinks ~= "" then
+        vim.keymap.set("n", state.keymaps.backlinks, function()
+            M._backlinks(buffer)
+        end, {
+            buffer = buffer,
+            silent = true,
+            desc = "Obelisk: find backlinks to current file",
+        })
+    end
 end
 
----@param opts? { filetypes?: string[], keymaps?: { open?: string, rename?: string } }
+---@param opts? { filetypes?: string[], keymaps?: { open?: string, rename?: string, backlinks?: string } }
 function M.setup(opts)
     opts = opts or {}
     local filetypes = opts.filetypes or { "markdown" }
@@ -517,6 +686,9 @@ function M.setup(opts)
         end
         if opts.keymaps.rename ~= nil then
             state.keymaps.rename = opts.keymaps.rename
+        end
+        if opts.keymaps.backlinks ~= nil then
+            state.keymaps.backlinks = opts.keymaps.backlinks
         end
     end
     local ft_set = {}

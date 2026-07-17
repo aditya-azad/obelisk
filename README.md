@@ -19,6 +19,11 @@ A small Neovim plugin for wiki-style note linking in Markdown.
 - **Rename notes** — press the `rename` keybinding (default `<leader>wr`) to
   rename the current file. Every `[[ ]]` reference to it across the note tree
   is rewritten to the new name (anchors and aliases are preserved).
+- **Backlinks picker** — press the `backlinks` keybinding (default
+  `<leader>wb`) to open a [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+  picker listing every file that references the current file via `[[ ]]`
+  (including `[[name#anchor]]` and `[[name|alias]]` forms). Selecting an
+  entry opens the referencing file with the cursor on the link.
 - **Configurable filetypes** — wikilink completion and the keymaps are
   attached only to the filetypes you choose (defaults to `markdown`).
 - **Named keymaps** — keybindings live under `wikilink.keymaps.<name>` so new
@@ -31,6 +36,8 @@ A small Neovim plugin for wiki-style note linking in Markdown.
 ## Requirements
 
 - Neovim 0.9+ (uses `vim.keymap.set` and `vim.fn.complete`).
+- [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) is required
+  for the backlinks picker (`<leader>wb`). The other features work without it.
 
 ## Installation
 
@@ -39,6 +46,7 @@ A small Neovim plugin for wiki-style note linking in Markdown.
 ```lua
 {
     "your-user/obelisk",
+    dependencies = { "nvim-telescope/telescope.nvim" },
     config = function()
         require("obelisk").setup()
     end,
@@ -69,6 +77,7 @@ require("obelisk").setup({
         keymaps = {
             open = "<leader>wo",              -- open the file under the cursor
             rename = "<leader>wr",            -- rename the current file (and fix links)
+            backlinks = "<leader>wb",         -- Telescope picker of files referencing this one
         },
     },
 })
@@ -81,9 +90,10 @@ require("obelisk").setup({
 | `greeting` | `string` | `"hello"` | Text shown by the `:Obelisk` command. |
 | `wikilink.enabled` | `boolean` | `true` | Enable `[[ ]]` completion and link-following. |
 | `wikilink.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the wikilink features are attached. |
-| `wikilink.keymaps` | `table` | `{ open = "<leader>wo", rename = "<leader>wr" }` | Named wikilink keybindings (see below). |
+| `wikilink.keymaps` | `table` | `{ open = "<leader>wo", rename = "<leader>wr", backlinks = "<leader>wb" }` | Named wikilink keybindings (see below). |
 | `wikilink.keymaps.open` | `string` | `"<leader>wo"` | Normal-mode keybinding used to open the file under the cursor. Set to `""` to disable it. |
 | `wikilink.keymaps.rename` | `string` | `"<leader>wr"` | Normal-mode keybinding that renames the current file and rewrites `[[ ]]` references to it. Set to `""` to disable it. |
+| `wikilink.keymaps.backlinks` | `string` | `"<leader>wb"` | Normal-mode keybinding that opens a Telescope picker of files referencing the current file via `[[ ]]`. Set to `""` to disable it. |
 
 ## Usage
 
@@ -95,5 +105,8 @@ require("obelisk").setup({
 - In normal mode, press `<leader>wr` (the `rename` keymap) to rename the
   current file. You'll be prompted for the new name; all `[[ ]]` links pointing
   to it are updated (including `[[name#anchor]]` and `[[name|alias]]` forms).
+- In normal mode, press `<leader>wb` (the `backlinks` keymap) to open a
+  Telescope picker of files referencing the current file. Selecting an entry
+  opens that file with the cursor placed on the referencing `[[ ]]` link.
 - Run `:Obelisk` to print the configured `greeting` (handy for verifying that
   setup ran).
