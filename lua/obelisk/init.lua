@@ -1,4 +1,5 @@
 local config = require("obelisk.config")
+local wikilink = require("obelisk.wikilink")
 
 local M = {}
 
@@ -12,6 +13,10 @@ function M.setup(opts)
     vim.api.nvim_create_user_command("Obelisk", function()
         vim.notify("obelisk: " .. M.config.greeting, vim.log.levels.INFO)
     end, { desc = "Obelisk demo command" })
+
+    if M.config.wikilink.enabled then
+        wikilink.setup({ filetypes = M.config.wikilink.filetypes })
+    end
 end
 
 return M
