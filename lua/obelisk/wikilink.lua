@@ -110,12 +110,17 @@ function M._trigger(buffer)
         return
     end
     vim.b[buffer].obelisk_wikilink_active = true
+    local trigger_line = vim.fn.line(".")
+    local trigger_col = vim.fn.col(".")
+    vim.b[buffer].obelisk_trigger_line = trigger_line
+    vim.b[buffer].obelisk_trigger_col = trigger_col
+    vim.b[buffer].obelisk_trigger_text_before = vim.fn.getline(trigger_line):sub(trigger_col)
     local saved_copt = vim.o.completeopt
     local needs_noselect = not string.find(saved_copt, "noselect")
     if needs_noselect then
         vim.o.completeopt = saved_copt .. ",noselect"
     end
-    vim.fn.complete(vim.fn.col("."), items)
+    vim.fn.complete(trigger_col, items)
     if needs_noselect then
         vim.o.completeopt = saved_copt
     end
@@ -127,11 +132,30 @@ function M._complete_done(buffer)
         return
     end
     vim.b[buffer].obelisk_wikilink_active = false
-    local item = vim.v.event.completed_item
-    if type(item) ~= "table" or item.word == nil or item.word == "" then
+    local trigger_line = vim.b[buffer].obelisk_trigger_line
+    local trigger_col = vim.b[buffer].obelisk_trigger_col
+    local text_before = vim.b[buffer].obelisk_trigger_text_before
+    vim.b[buffer].obelisk_trigger_line = nil
+    vim.b[buffer].obelisk_trigger_col = nil
+    vim.b[buffer].obelisk_trigger_text_before = nil
+    if trigger_line == nil or trigger_col == nil or text_before == nil then
         return
     end
-    vim.fn.feedkeys("]]", "n")
+    local current_line_text = vim.fn.getline(trigger_line)
+    local text_after = current_line_text:sub(trigger_col)
+    if text_after == text_before then
+        return
+    end
+    if vim.fn.line(".") == trigger_line then
+        local col = vim.fn.col(".")
+        local line = vim.fn.getline(".")
+        vim.fn.setline(".", line:sub(1, col - 1) .. "]]" .. line:sub(col))
+        if vim.api.nvim_get_mode().mode == "i" then
+            vim.fn.cursor(vim.fn.line("."), col + 2)
+        end
+    else
+        vim.fn.setline(trigger_line, current_line_text .. "]]")
+    end
 end
 
 --- Open the wikilink under the cursor; fall back to the key's default
