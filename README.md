@@ -35,6 +35,11 @@ A small Neovim plugin for wiki-style note linking in Markdown.
   listing every note under the notes directory (including nested files).
   Selecting an entry opens that note. Like `new`, this is a global keymap, so
   it works from any buffer.
+- **Paste images as Markdown** — copying an image to the system clipboard and
+  pasting (via `<C-v>` in insert mode, `p`/`P` in normal mode, or any bracketed
+  / GUI / middle-click paste) into a note saves the image under
+  `notes_dir/assets` and inserts a `![](assets/…)` link at the cursor. Text
+  pastes pass through unchanged when the clipboard has no image.
 - **Configurable filetypes** — wikilink completion and the keymaps are
   attached only to the filetypes you choose (defaults to `markdown`).
 - **Notes-directory scoped** — all wikilink features only activate on files
@@ -53,6 +58,9 @@ A small Neovim plugin for wiki-style note linking in Markdown.
 - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) is required
   for the backlinks picker (`<leader>wb`) and the find picker (`<leader>wo`).
   The other features work without it.
+- A clipboard tool is required for pasting images: `wl-clipboard` (Wayland),
+  `xclip` (X11), or `pngpaste` (macOS). The feature is skipped silently (text
+  paste still works) if none is found.
 
 ## Installation
 
@@ -97,6 +105,16 @@ require("obelisk").setup({
             find = "<leader>wo",              -- Telescope picker to open any note
         },
     },
+    paste = {
+        enabled = true,                       -- enable pasting images as Markdown
+        filetypes = { "markdown" },           -- where the feature is active
+        assets_dir = "assets",                -- saved images go under notes_dir/assets_dir
+        keymaps = {
+            insert_paste = "<C-v>",           -- insert-mode paste key
+            normal_paste = "p",               -- normal-mode paste (below cursor)
+            normal_paste_above = "P",         -- normal-mode paste (above cursor)
+        },
+    },
 })
 ```
 
@@ -113,6 +131,13 @@ require("obelisk").setup({
 | `wikilink.keymaps.backlinks` | `string` | `"<leader>wb"` | Normal-mode keybinding that opens a Telescope picker of files referencing the current file via `[[ ]]`. Set to `""` to disable it. |
 | `wikilink.keymaps.new` | `string` | `"<leader>wn"` | Normal-mode keybinding that prompts for a name, creates a new note under the notes directory, and opens it. This is a global keymap (works from any buffer, not only files in `notes_dir`). Set to `""` to disable it. |
 | `wikilink.keymaps.find` | `string` | `"<leader>wo"` | Normal-mode keybinding that opens a Telescope picker listing every note under the notes directory for quick opening. This is a global keymap (works from any buffer, not only files in `notes_dir`). Set to `""` to disable it. |
+| `paste.enabled` | `boolean` | `true` | Enable pasting images from the clipboard as Markdown links. |
+| `paste.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where image-paste is active. |
+| `paste.assets_dir` | `string` | `"assets"` | Directory (relative to `notes_dir`) where pasted images are saved. It is created on first paste if it does not exist. |
+| `paste.keymaps` | `table` | `{ insert_paste = "<C-v>", normal_paste = "p", normal_paste_above = "P" }` | Named paste keybindings (see below). |
+| `paste.keymaps.insert_paste` | `string` | `"<C-v>"` | Insert-mode key intercepted to paste images. When the clipboard has no image it falls back to the key's normal behavior (insert-next-char-literally in a terminal, or paste in a GUI). Set to `""` to disable it. |
+| `paste.keymaps.normal_paste` | `string` | `"p"` | Normal-mode key intercepted to paste images below the cursor. When the clipboard has no image it falls back to the normal put (preserving any count and register, e.g. `3p`, `"ap`). Set to `""` to disable it. |
+| `paste.keymaps.normal_paste_above` | `string` | `"P"` | Normal-mode key intercepted to paste images above the cursor, with the same fallback as `normal_paste`. Set to `""` to disable it. |
 
 ## Usage
 
@@ -138,3 +163,11 @@ require("obelisk").setup({
 - In normal mode, press `<leader>wo` (the `find` keymap) to open a Telescope
   picker listing every note under the notes directory. This works from any
   buffer. Selecting an entry opens that note.
+- Copy an image to your system clipboard (e.g. a screenshot), then paste inside
+  a note with `<C-v>` (insert mode) or `p`/`P` (normal mode) — or via any
+  bracketed / GUI / middle-click paste. The image is saved under
+  `notes_dir/assets` as `<timestamp>.png` and a `![](assets/…)` link is
+  inserted at the cursor (or on a new line below/above for `p`/`P`). Links use
+  a path relative to the note, so nested notes get `../assets/…`. Pasting text
+  (no image in the clipboard) works exactly as normal. Files outside
+  `notes_dir` are never affected.

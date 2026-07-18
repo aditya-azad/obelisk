@@ -1,5 +1,6 @@
 local config = require("obelisk.config")
 local wikilink = require("obelisk.wikilink")
+local paste = require("obelisk.paste")
 
 local M = {}
 
@@ -15,6 +16,15 @@ function M.setup(opts)
             notes_dir = M.config.notes_dir,
             filetypes = M.config.wikilink.filetypes,
             keymaps = M.config.wikilink.keymaps,
+        })
+    end
+
+    if M.config.paste.enabled then
+        paste.setup({
+            notes_dir = M.config.notes_dir,
+            filetypes = M.config.paste.filetypes,
+            assets_dir = M.config.paste.assets_dir,
+            keymaps = M.config.paste.keymaps,
         })
     end
 end
