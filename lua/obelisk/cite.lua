@@ -11,6 +11,7 @@ local state = {
     timeout = 5,
     keymaps = {
         insert = "<leader>wc",
+        open_pdf = "<leader>wp",
     },
 }
 
@@ -43,6 +44,33 @@ local function in_notes_dir(path)
     return relpath_under(state.notes_dir, path) ~= nil
 end
 
+--- Open `path` in the operating system's default application. Uses
+--- `vim.ui.open` on Neovim 0.10+ and falls back to `open` (macOS),
+--- `xdg-open` (Linux/BSD), or `cmd /c start` (Windows) on older versions.
+---@param path string
+local function open_in_system_viewer(path)
+    if vim.ui and vim.ui.open then
+        local ok, err = pcall(vim.ui.open, path)
+        if ok then
+            return
+        end
+        vim.notify("obelisk: could not open " .. path .. ": " .. tostring(err), vim.log.levels.WARN)
+        return
+    end
+    if vim.fn.has("mac") == 1 then
+        vim.fn.jobstart({ "open", path }, { detach = true })
+        return
+    elseif vim.fn.has("win32") == 1 then
+        vim.fn.jobstart({ "cmd", "/c", "start", "", path }, { detach = true })
+        return
+    end
+    if vim.fn.executable("xdg-open") == 1 then
+        vim.fn.jobstart({ "xdg-open", path }, { detach = true })
+        return
+    end
+    vim.notify("obelisk: no system file opener found (tried open, xdg-open)", vim.log.levels.ERROR)
+end
+
 --- Extract the Better BibTeX citation key from a CSL-JSON item. BBT emits
 --- `citation-key` (and a duplicate `citekey`); fall back to a few alternates.
 ---@param item table
@@ -52,6 +80,52 @@ local function citekey_of(item)
         or item.citekey
         or item.citationKey
         or item.key
+end
+
+--- Return the citation key under the cursor when it sits within a `[@…]`
+--- pandoc citation. Handles locators (`[@smith2024, p. 12]`), suppress-author
+--- prefixes (`[-@smith2024]`), and multiple citations (`[@a; @b]`); when the
+--- cursor is inside the brackets but not directly on a key, the closest key is
+--- returned. Returns nil when the cursor is not inside any `[@…]`.
+---@return string|nil
+local function citation_under_cursor()
+    local line = vim.fn.getline(".")
+    local col = vim.fn.col(".")
+    local start = 1
+    while true do
+        local s, at_pos = line:find("%[%-?@", start)
+        if not s then
+            return nil
+        end
+        local e = line:find("%]", at_pos + 1)
+        if not e then
+            return nil
+        end
+        if col >= s and col <= e then
+            local inner = line:sub(at_pos, e - 1)
+            local cursor_inner = col - at_pos + 1
+            local found = nil
+            local best_dist = math.huge
+            for pos, key in inner:gmatch("()@([^,;]+)") do
+                local key_end = pos + #key
+                if cursor_inner >= pos and cursor_inner <= key_end then
+                    key = vim.trim(key)
+                    return key ~= "" and key or nil
+                end
+                local dist = math.min(math.abs(cursor_inner - pos), math.abs(cursor_inner - key_end))
+                if dist < best_dist then
+                    best_dist = dist
+                    found = key
+                end
+            end
+            if found then
+                found = vim.trim(found)
+                return found ~= "" and found or nil
+            end
+            return nil
+        end
+        start = e + 1
+    end
 end
 
 --- Format the author list of a CSL-JSON item into a short display string
@@ -245,6 +319,49 @@ local function bbt_search(query, callback)
     return job_id
 end
 
+--- Synchronously run a Better BibTeX `item.attachments` request for `citekey`
+--- and return the attachment array. Each attachment has a `path` field with the
+--- absolute file path on disk (suitable for opening in a system viewer). Returns
+--- `(attachments, nil)` on success or `(nil, err_msg)` on failure.
+---@param citekey string
+---@return table[]|nil, string|nil
+local function bbt_attachments(citekey)
+    if vim.fn.executable("curl") ~= 1 then
+        return nil, "curl executable not found (required for Zotero integration)"
+    end
+    local body = json.encode({
+        jsonrpc = "2.0",
+        method = "item.attachments",
+        params = { citekey },
+    })
+    local out = vim.fn.system({
+        "curl", "-sS", "-m", tostring(state.timeout),
+        state.url, "-X", "POST",
+        "-H", "Content-Type: application/json",
+        "-H", "Accept: application/json",
+        "--data-binary", body,
+    })
+    if vim.v.shell_error ~= 0 then
+        return nil, "cannot reach Better BibTeX at " .. state.url
+            .. " (is Zotero running with the Better BibTeX plugin?)"
+    end
+    if out == "" then
+        return nil, "empty response from Better BibTeX"
+    end
+    local ok, parsed = pcall(json.decode, out)
+    if not ok or type(parsed) ~= "table" then
+        return nil, "could not parse Better BibTeX response"
+    end
+    if parsed.error then
+        return nil, parsed.error.message or "Better BibTeX error"
+    end
+    local result = parsed.result
+    if type(result) ~= "table" then
+        return nil, "no attachments found for @" .. citekey
+    end
+    return result, nil
+end
+
 --- Build a Telescope finder that queries Better BibTeX on every keystroke.
 --- The finder implements the `__call(prompt, process_result, process_complete)`
 --- contract used by telescope's picker loop, and uses a generation counter so
@@ -381,6 +498,49 @@ function M._cite(buffer)
     }):find()
 end
 
+--- Open the PDF attachment of the `[@citekey]` under the cursor in the default
+--- system viewer. Falls back to the key's default action when the cursor is not
+--- inside a citation. Queries Better BibTeX for the item's attachments and
+--- prefers the first PDF; if no PDF is found, opens the first attachment with a
+--- file path.
+---@param buffer integer
+function M._open_citation_pdf(buffer)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return
+    end
+    local citekey = citation_under_cursor()
+    if not citekey then
+        local key = state.keymaps.open_pdf
+        if key ~= nil and key ~= "" then
+            vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, true, true), "n", false)
+        end
+        return
+    end
+    local attachments, err = bbt_attachments(citekey)
+    if err then
+        vim.notify("obelisk: " .. err, vim.log.levels.ERROR)
+        return
+    end
+    local pdf_path = nil
+    local any_path = nil
+    for _, att in ipairs(attachments) do
+        local p = att.path
+        if type(p) == "string" and p ~= "" then
+            any_path = p
+            if p:lower():match("%.pdf$") then
+                pdf_path = p
+                break
+            end
+        end
+    end
+    local path = pdf_path or any_path
+    if not path then
+        vim.notify("obelisk: no file attachment found for @" .. citekey, vim.log.levels.WARN)
+        return
+    end
+    open_in_system_viewer(path)
+end
+
 ---@param buffer integer
 function M.attach(buffer)
     if not vim.api.nvim_buf_is_valid(buffer) then
@@ -404,9 +564,19 @@ function M.attach(buffer)
             desc = "Obelisk: insert a Zotero citation at the cursor",
         })
     end
+
+    if state.keymaps.open_pdf ~= nil and state.keymaps.open_pdf ~= "" then
+        vim.keymap.set("n", state.keymaps.open_pdf, function()
+            M._open_citation_pdf(buffer)
+        end, {
+            buffer = buffer,
+            silent = true,
+            desc = "Obelisk: open the PDF of the citation under the cursor",
+        })
+    end
 end
 
----@param opts? { notes_dir?: string, filetypes?: string[], url?: string, timeout?: integer, keymaps?: { insert?: string } }
+---@param opts? { notes_dir?: string, filetypes?: string[], url?: string, timeout?: integer, keymaps?: { insert?: string, open_pdf?: string } }
 function M.setup(opts)
     opts = opts or {}
     if opts.notes_dir and opts.notes_dir ~= "" then
@@ -419,8 +589,13 @@ function M.setup(opts)
         state.timeout = opts.timeout
     end
     local filetypes = opts.filetypes or { "markdown" }
-    if opts.keymaps ~= nil and opts.keymaps.insert ~= nil then
-        state.keymaps.insert = opts.keymaps.insert
+    if opts.keymaps ~= nil then
+        if opts.keymaps.insert ~= nil then
+            state.keymaps.insert = opts.keymaps.insert
+        end
+        if opts.keymaps.open_pdf ~= nil then
+            state.keymaps.open_pdf = opts.keymaps.open_pdf
+        end
     end
     local ft_set = {}
     for _, ft in ipairs(filetypes) do

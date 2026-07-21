@@ -47,6 +47,11 @@ A small Neovim plugin for wiki-style note linking in Markdown.
   endpoint. Selecting an entry inserts a pandoc-style `[@citekey]` citation
   (e.g. `[@smith2024example]`) at the cursor and leaves you in insert mode
   right after it.
+- **Open citation PDFs** — place the cursor on a `[@citekey]` citation (e.g.
+  `[@smith2024, p. 12]`) and press the `open_pdf` keybinding (default
+  `<leader>wp`) to open the item's PDF attachment in your operating system's
+  default viewer. The citekey is resolved via the Better BibTeX `item.attachments`
+  JSON-RPC call; the first PDF attachment is preferred.
 - **Configurable filetypes** — wikilink completion and the keymaps are
   attached only to the filetypes you choose (defaults to `markdown`).
 - **Notes-directory scoped** — all wikilink features only activate on files
@@ -135,6 +140,7 @@ require("obelisk").setup({
         timeout = 5,                          -- seconds to wait per search request
         keymaps = {
             insert = "<leader>wc",            -- Telescope picker to insert a [@citekey]
+            open_pdf = "<leader>wp",          -- open the PDF of the [@citekey] under the cursor
         },
     },
 })
@@ -164,8 +170,9 @@ require("obelisk").setup({
 | `cite.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the citation picker is active. |
 | `cite.url` | `string` | `"http://127.0.0.1:23119/better-bibtex/json-rpc"` | Better BibTeX JSON-RPC endpoint URL. Change this only if you run Zotero's local server on a different port. |
 | `cite.timeout` | `integer` | `5` | Seconds to wait for a single Better BibTeX search request before giving up. |
-| `cite.keymaps` | `table` | `{ insert = "<leader>wc" }` | Named citation keybindings (see below). |
+| `cite.keymaps` | `table` | `{ insert = "<leader>wc", open_pdf = "<leader>wp" }` | Named citation keybindings (see below). |
 | `cite.keymaps.insert` | `string` | `"<leader>wc"` | Normal-mode keybinding that opens a Telescope picker to search Zotero items by title/author/year and insert a `[@citekey]` pandoc citation at the cursor. It is attached only to buffers inside `notes_dir`. Set to `""` to disable it. |
+| `cite.keymaps.open_pdf` | `string` | `"<leader>wp"` | Normal-mode keybinding that opens the PDF attachment of the `[@citekey]` under the cursor in the default system viewer. The citekey (with any locator or suppress-author prefix stripped) is looked up via the Better BibTeX `item.attachments` JSON-RPC call and the first PDF attachment is preferred; if none of the attachments is a PDF the first file attachment is opened instead. Set to `""` to disable it. |
 
 ## Usage
 
@@ -206,3 +213,9 @@ require("obelisk").setup({
   leaves you in insert mode right after the closing `]`, so you can keep
   writing or add a locator like `[@smith2024, p. 12]`. Zotero must be running
   with the Better BibTeX plugin for this to work.
+- In normal mode, place the cursor anywhere inside a `[@citekey]` citation
+  (e.g. `[@smith2024]` or `[@smith2024, p. 12]`) and press `<leader>wp` (the
+  `open_pdf` keymap) to open the item's PDF in your system's default viewer.
+  Locators, suppress-author prefixes (`[-@key]`), and multiple citations
+  (`[@a; @b]`) are handled — the key closest to the cursor is used. Zotero
+  must be running with the Better BibTeX plugin.
