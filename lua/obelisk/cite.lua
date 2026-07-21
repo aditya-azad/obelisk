@@ -1,0 +1,446 @@
+local M = {}
+
+local json = vim.json or {
+    encode = function(t) return vim.fn.json_encode(t) end,
+    decode = function(s) return vim.fn.json_decode(s) end,
+}
+
+local state = {
+    notes_dir = "",
+    url = "http://127.0.0.1:23119/better-bibtex/json-rpc",
+    timeout = 5,
+    keymaps = {
+        insert = "<leader>wc",
+    },
+}
+
+--- Return the path of `to_path` relative to the directory `from_dir`,
+--- assuming `from_dir` is an ancestor of (or equal to) `to_path`'s directory.
+--- Returns nil when `to_path` is not under `from_dir`.
+---@param from_dir string
+---@param to_path string
+---@return string|nil
+local function relpath_under(from_dir, to_path)
+    from_dir = vim.fs.normalize(from_dir)
+    to_path = vim.fs.normalize(to_path)
+    if from_dir == "/" then
+        return to_path:sub(2)
+    end
+    local prefix = from_dir .. "/"
+    if to_path:sub(1, #prefix) == prefix then
+        return to_path:sub(#prefix + 1)
+    end
+    return nil
+end
+
+--- Return true when `path` (absolute) lives inside the configured notes dir.
+---@param path string
+---@return boolean
+local function in_notes_dir(path)
+    if path == "" or state.notes_dir == "" then
+        return false
+    end
+    return relpath_under(state.notes_dir, path) ~= nil
+end
+
+--- Extract the Better BibTeX citation key from a CSL-JSON item. BBT emits
+--- `citation-key` (and a duplicate `citekey`); fall back to a few alternates.
+---@param item table
+---@return string|nil
+local function citekey_of(item)
+    return item["citation-key"]
+        or item.citekey
+        or item.citationKey
+        or item.key
+end
+
+--- Format the author list of a CSL-JSON item into a short display string
+--- ("Smith", "Smith & Jones", "Smith et al.", or "").
+---@param item table
+---@return string
+local function format_authors(item)
+    local authors = item.author or item.creators
+    if type(authors) ~= "table" then
+        return ""
+    end
+    local names = {}
+    for _, a in ipairs(authors) do
+        if type(a) == "table" then
+            if a.name then
+                names[#names + 1] = a.name
+            elseif a.family then
+                names[#names + 1] = a.family
+            elseif a.literal then
+                names[#names + 1] = a.literal
+            end
+        end
+    end
+    if #names == 0 then
+        return ""
+    elseif #names == 1 then
+        return names[1]
+    elseif #names == 2 then
+        return names[1] .. " & " .. names[2]
+    end
+    return names[1] .. " et al."
+end
+
+--- Extract a 4-digit year from a CSL-JSON item's `issued` date-parts or the
+--- Zotero `date` string.
+---@param item table
+---@return string
+local function format_year(item)
+    local issued = item.issued
+    if type(issued) == "table" and type(issued["date-parts"]) == "table" then
+        local first = issued["date-parts"][1]
+        if type(first) == "table" and first[1] ~= nil then
+            return tostring(first[1])
+        end
+    end
+    if type(item.date) == "string" then
+        local y = item.date:match("^(%d%d%d%d)")
+        if y then
+            return y
+        end
+    end
+    return ""
+end
+
+--- Build a Telescope entry from a CSL-JSON item. The entry's `value` is the
+--- citation key; `display` is a readable one-line summary; `ordinal` carries
+--- every field a user might search by so the generic sorter keeps relevant
+--- results. Returns nil for items without a citation key.
+---@param item table
+---@return table|nil
+local function make_entry(item)
+    local citekey = citekey_of(item)
+    if not citekey or citekey == "" then
+        return nil
+    end
+    local title = item.title or ""
+    local authors = format_authors(item)
+    local year = format_year(item)
+
+    local display_parts = { citekey }
+    local mid = ""
+    if authors ~= "" and year ~= "" then
+        mid = authors .. " (" .. year .. ")"
+    elseif authors ~= "" then
+        mid = authors
+    elseif year ~= "" then
+        mid = "(" .. year .. ")"
+    end
+    if mid ~= "" then
+        display_parts[#display_parts + 1] = mid
+    end
+    if title ~= "" then
+        display_parts[#display_parts + 1] = title
+    end
+    local display = table.concat(display_parts, "  |  ")
+    local ordinal = citekey .. " " .. title .. " " .. authors .. " " .. year
+
+    return {
+        value = citekey,
+        display = display,
+        ordinal = ordinal,
+    }
+end
+
+--- Synchronously check that the Better BibTeX JSON-RPC endpoint is reachable
+--- and ready. Returns `(true, nil)` on success or `(false, err_msg)`.
+---@return boolean, string|nil
+local function bbt_ready()
+    if vim.fn.executable("curl") ~= 1 then
+        return false, "curl executable not found (required for Zotero integration)"
+    end
+    local body = json.encode({ jsonrpc = "2.0", method = "api.ready", params = {} })
+    local out = vim.fn.system({
+        "curl", "-sS", "-m", "1",
+        state.url, "-X", "POST",
+        "-H", "Content-Type: application/json",
+        "-H", "Accept: application/json",
+        "--data-binary", body,
+    })
+    if vim.v.shell_error ~= 0 then
+        return false, "cannot reach Better BibTeX at " .. state.url
+            .. " (is Zotero running with the Better BibTeX plugin?)"
+    end
+    if out == "" then
+        return false, "empty response from Better BibTeX at " .. state.url
+    end
+    local ok, parsed = pcall(json.decode, out)
+    if not ok or type(parsed) ~= "table" then
+        return false, "could not parse Better BibTeX response"
+    end
+    if parsed.error then
+        return false, parsed.error.message or "Better BibTeX error"
+    end
+    if not (parsed.result and parsed.result.betterbibtex) then
+        return false, "Better BibTeX not ready at " .. state.url
+    end
+    return true
+end
+
+--- Asynchronously run a Better BibTeX `item.search` request for `query` and
+--- invoke `callback(results, err)` when it completes. `results` is the CSL-JSON
+--- item array (empty on success with no matches); `err` is a string on failure.
+--- Returns the job id so the caller can cancel it.
+---@param query string
+---@param callback fun(results: table[]|nil, err: string|nil)
+---@return integer|nil
+local function bbt_search(query, callback)
+    if vim.fn.executable("curl") ~= 1 then
+        callback(nil, "curl executable not found")
+        return nil
+    end
+    local body = json.encode({
+        jsonrpc = "2.0",
+        method = "item.search",
+        params = { query },
+    })
+    local chunks = {}
+    local job_id = vim.fn.jobstart({
+        "curl", "-sS", "-m", tostring(state.timeout),
+        state.url, "-X", "POST",
+        "-H", "Content-Type: application/json",
+        "-H", "Accept: application/json",
+        "--data-binary", body,
+    }, {
+        on_stdout = function(_, data, _)
+            if type(data) == "table" then
+                for _, line in ipairs(data) do
+                    if line ~= "" then
+                        chunks[#chunks + 1] = line
+                    end
+                end
+            end
+        end,
+        on_exit = function(_, exit_code, _)
+            if exit_code ~= 0 then
+                callback(nil, string.format("curl exited %d (is Zotero running?)", exit_code))
+                return
+            end
+            local raw = table.concat(chunks, "")
+            if raw == "" then
+                callback(nil, "empty response from Better BibTeX")
+                return
+            end
+            local ok, parsed = pcall(json.decode, raw)
+            if not ok then
+                callback(nil, "could not parse Better BibTeX response")
+                return
+            end
+            if type(parsed) == "table" and parsed.error then
+                callback(nil, parsed.error.message or "json-rpc error")
+                return
+            end
+            local result = parsed and parsed.result
+            if type(result) ~= "table" then
+                callback({}, nil)
+                return
+            end
+            callback(result, nil)
+        end,
+    })
+    return job_id
+end
+
+--- Build a Telescope finder that queries Better BibTeX on every keystroke.
+--- The finder implements the `__call(prompt, process_result, process_complete)`
+--- contract used by telescope's picker loop, and uses a generation counter so
+--- responses from cancelled (superseded) requests never feed the picker.
+---@param entry_maker fun(item: table): table|nil
+---@return table
+local function new_bbt_finder(entry_maker)
+    local obj = {}
+    obj.__index = obj
+    local current_job = nil
+    local current_gen = 0
+    local notified = false
+
+    function obj:_find(prompt, process_result, process_complete)
+        current_gen = current_gen + 1
+        local gen = current_gen
+        if current_job then
+            vim.fn.jobstop(current_job)
+            current_job = nil
+        end
+
+        local query = prompt or ""
+        -- BBT's `item.search("")` returns nothing in current versions, so skip
+        -- the request for an empty prompt and show an empty list instead.
+        if query == "" then
+            process_complete()
+            return
+        end
+
+        current_job = bbt_search(query, function(results, err)
+            if gen ~= current_gen then
+                return
+            end
+            current_job = nil
+            if err then
+                if not notified then
+                    notified = true
+                    vim.schedule(function()
+                        vim.notify("obelisk: Zotero search failed: " .. err, vim.log.levels.WARN)
+                    end)
+                end
+                process_complete()
+                return
+            end
+            if not results then
+                process_complete()
+                return
+            end
+            local n = 0
+            for _, item in ipairs(results) do
+                n = n + 1
+                local entry = entry_maker(item)
+                if entry then
+                    entry.index = n
+                end
+                if process_result(entry) then
+                    return
+                end
+            end
+            process_complete()
+        end)
+    end
+
+    function obj.close()
+        current_gen = current_gen + 1
+        if current_job then
+            vim.fn.jobstop(current_job)
+            current_job = nil
+        end
+    end
+
+    return setmetatable(obj, {
+        __call = function(t, ...) return t:_find(...) end,
+    })
+end
+
+--- Insert `[@citekey]` at the current cursor position in `buffer`, then enter
+--- insert mode with the cursor placed right after the closing `]`.
+---@param buffer integer
+---@param citekey string
+local function insert_citation(buffer, citekey)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return
+    end
+    local text = "[@" .. citekey .. "]"
+    local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+    local lines = vim.api.nvim_buf_get_lines(buffer, row - 1, row, false)
+    local line = lines[1] or ""
+    local before = line:sub(1, col + 1)
+    local after = line:sub(col + 2)
+    vim.api.nvim_buf_set_lines(buffer, row - 1, row, false, { before .. text .. after })
+    local new_col = col + #text
+    vim.api.nvim_win_set_cursor(0, { row, new_col })
+    vim.cmd("startinsert")
+end
+
+--- Check that Better BibTeX is reachable and open a Telescope picker that
+--- searches the Zotero library by title/author/year. Selecting an entry
+--- inserts `[@citekey]` at the cursor.
+---@param buffer integer
+function M._cite(buffer)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return
+    end
+    local ready, err = bbt_ready()
+    if not ready then
+        vim.notify("obelisk: " .. err, vim.log.levels.ERROR)
+        return
+    end
+
+    local ok, pickers = pcall(require, "telescope.pickers")
+    if not ok then
+        vim.notify("obelisk: telescope.nvim is required for citations", vim.log.levels.ERROR)
+        return
+    end
+    local conf = require("telescope.config").values
+    local actions = require("telescope.actions")
+    local action_state = require("telescope.actions.state")
+
+    pickers.new({}, {
+        prompt_title = "Obelisk Citations (Zotero)",
+        finder = new_bbt_finder(make_entry),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr, _)
+            actions.select_default:replace(function()
+                local selection = action_state.get_selected_entry()
+                actions.close(prompt_bufnr)
+                if selection then
+                    insert_citation(buffer, selection.value)
+                end
+            end)
+            return true
+        end,
+    }):find()
+end
+
+---@param buffer integer
+function M.attach(buffer)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return
+    end
+    if vim.b[buffer].obelisk_cite_attached then
+        return
+    end
+    local path = vim.api.nvim_buf_get_name(buffer)
+    if not in_notes_dir(path) then
+        return
+    end
+    vim.b[buffer].obelisk_cite_attached = true
+
+    if state.keymaps.insert ~= nil and state.keymaps.insert ~= "" then
+        vim.keymap.set("n", state.keymaps.insert, function()
+            M._cite(buffer)
+        end, {
+            buffer = buffer,
+            silent = true,
+            desc = "Obelisk: insert a Zotero citation at the cursor",
+        })
+    end
+end
+
+---@param opts? { notes_dir?: string, filetypes?: string[], url?: string, timeout?: integer, keymaps?: { insert?: string } }
+function M.setup(opts)
+    opts = opts or {}
+    if opts.notes_dir and opts.notes_dir ~= "" then
+        state.notes_dir = vim.fs.normalize(vim.fn.expand(opts.notes_dir))
+    end
+    if opts.url and opts.url ~= "" then
+        state.url = opts.url
+    end
+    if opts.timeout and opts.timeout > 0 then
+        state.timeout = opts.timeout
+    end
+    local filetypes = opts.filetypes or { "markdown" }
+    if opts.keymaps ~= nil and opts.keymaps.insert ~= nil then
+        state.keymaps.insert = opts.keymaps.insert
+    end
+    local ft_set = {}
+    for _, ft in ipairs(filetypes) do
+        ft_set[ft] = true
+    end
+
+    local group = vim.api.nvim_create_augroup("obelisk.cite", { clear = true })
+    vim.api.nvim_create_autocmd("FileType", {
+        group = group,
+        pattern = filetypes,
+        callback = function(args)
+            M.attach(args.buf)
+        end,
+    })
+
+    for _, buffer in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(buffer) and ft_set[vim.bo[buffer].filetype] then
+            M.attach(buffer)
+        end
+    end
+end
+
+return M

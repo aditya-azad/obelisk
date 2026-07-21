@@ -40,6 +40,13 @@ A small Neovim plugin for wiki-style note linking in Markdown.
   / GUI / middle-click paste) into a note saves the image under
   `notes_dir/assets` and inserts a `![](assets/…)` link at the cursor. Text
   pastes pass through unchanged when the clipboard has no image.
+- **Insert Zotero citations** — press the `insert` keybinding (default
+  `<leader>wc`) to open a [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+  picker that searches your Zotero library live (by title, author, or year)
+  via the [Better BibTeX](https://retorque.re/zotero-better-bibtex/) JSON-RPC
+  endpoint. Selecting an entry inserts a pandoc-style `[@citekey]` citation
+  (e.g. `[@smith2024example]`) at the cursor and leaves you in insert mode
+  right after it.
 - **Configurable filetypes** — wikilink completion and the keymaps are
   attached only to the filetypes you choose (defaults to `markdown`).
 - **Notes-directory scoped** — all wikilink features only activate on files
@@ -56,11 +63,17 @@ A small Neovim plugin for wiki-style note linking in Markdown.
 
 - Neovim 0.9+ (uses `vim.keymap.set` and `vim.fn.complete`).
 - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) is required
-  for the backlinks picker (`<leader>wb`) and the find picker (`<leader>wo`).
-  The other features work without it.
+  for the backlinks picker (`<leader>wb`), the find picker (`<leader>wo`), and
+  the citation picker (`<leader>wc`). The other features work without it.
 - A clipboard tool is required for pasting images: `wl-clipboard` (Wayland),
   `xclip` (X11), or `pngpaste` (macOS). The feature is skipped silently (text
   paste still works) if none is found.
+- [Zotero](https://www.zotero.org/) with the
+  [Better BibTeX](https://retorque.re/zotero-better-bibtex/) plugin is required
+  for the citation picker (`<leader>wc`). Zotero must be running while you use
+  it, and the local API must be enabled (Settings → Advanced → *Allow other
+  applications on this computer to communicate with Zotero*). `curl` is used to
+  talk to the JSON-RPC endpoint. The other features work without it.
 
 ## Installation
 
@@ -115,6 +128,15 @@ require("obelisk").setup({
             normal_paste_above = "P",         -- normal-mode paste (above cursor)
         },
     },
+    cite = {
+        enabled = true,                       -- enable Zotero citation insertion
+        filetypes = { "markdown" },           -- where the feature is active
+        url = "http://127.0.0.1:23119/better-bibtex/json-rpc",  -- BBT JSON-RPC endpoint
+        timeout = 5,                          -- seconds to wait per search request
+        keymaps = {
+            insert = "<leader>wc",            -- Telescope picker to insert a [@citekey]
+        },
+    },
 })
 ```
 
@@ -138,6 +160,12 @@ require("obelisk").setup({
 | `paste.keymaps.insert_paste` | `string` | `"<C-v>"` | Insert-mode key intercepted to paste images. When the clipboard has no image it falls back to the key's normal behavior (insert-next-char-literally in a terminal, or paste in a GUI). Set to `""` to disable it. |
 | `paste.keymaps.normal_paste` | `string` | `"p"` | Normal-mode key intercepted to paste images below the cursor. When the clipboard has no image it falls back to the normal put (preserving any count and register, e.g. `3p`, `"ap`). Set to `""` to disable it. |
 | `paste.keymaps.normal_paste_above` | `string` | `"P"` | Normal-mode key intercepted to paste images above the cursor, with the same fallback as `normal_paste`. Set to `""` to disable it. |
+| `cite.enabled` | `boolean` | `true` | Enable the Zotero Better BibTeX citation picker. |
+| `cite.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the citation picker is active. |
+| `cite.url` | `string` | `"http://127.0.0.1:23119/better-bibtex/json-rpc"` | Better BibTeX JSON-RPC endpoint URL. Change this only if you run Zotero's local server on a different port. |
+| `cite.timeout` | `integer` | `5` | Seconds to wait for a single Better BibTeX search request before giving up. |
+| `cite.keymaps` | `table` | `{ insert = "<leader>wc" }` | Named citation keybindings (see below). |
+| `cite.keymaps.insert` | `string` | `"<leader>wc"` | Normal-mode keybinding that opens a Telescope picker to search Zotero items by title/author/year and insert a `[@citekey]` pandoc citation at the cursor. It is attached only to buffers inside `notes_dir`. Set to `""` to disable it. |
 
 ## Usage
 
@@ -171,3 +199,10 @@ require("obelisk").setup({
   a path relative to the note, so nested notes get `../assets/…`. Pasting text
   (no image in the clipboard) works exactly as normal. Files outside
   `notes_dir` are never affected.
+- In normal mode inside a note, press `<leader>wc` (the `insert` keymap) to
+  open the Zotero citation picker. Type part of a paper's title or an author's
+  name; results stream in live from Better BibTeX as you type. Selecting an
+  entry inserts `[@citekey]` (e.g. `[@smith2024example]`) at the cursor and
+  leaves you in insert mode right after the closing `]`, so you can keep
+  writing or add a locator like `[@smith2024, p. 12]`. Zotero must be running
+  with the Better BibTeX plugin for this to work.

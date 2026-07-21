@@ -23,10 +23,21 @@ local M = {}
 ---@field assets_dir string Directory (relative to notes_dir) where pasted images are saved
 ---@field keymaps obelisk.PasteKeymaps Named paste keybindings
 
+---@class obelisk.CiteKeymaps
+---@field insert string Keybinding (normal mode) that opens a Telescope picker to search Zotero items by title/author and insert a `[@citekey]` citation at the cursor
+
+---@class obelisk.CiteConfig
+---@field enabled boolean Enable inserting Zotero Better BibTeX citation keys via a Telescope picker
+---@field filetypes string[] Filetypes where the citation picker is active
+---@field url string Better BibTeX JSON-RPC endpoint URL
+---@field timeout integer Seconds to wait for a single Better BibTeX search request before giving up
+---@field keymaps obelisk.CiteKeymaps Citation keybindings
+
 ---@class obelisk.Config
 ---@field notes_dir string Directory where notes live; wikilink features only activate for files inside it
 ---@field wikilink obelisk.WikilinkConfig Configuration for [[ ]] wikilink completion
 ---@field paste obelisk.PasteConfig Configuration for pasting images from the clipboard as Markdown
+---@field cite obelisk.CiteConfig Configuration for inserting Zotero Better BibTeX citations
 
 M.defaults = {
     notes_dir = vim.fn.getcwd() .. "/notes",
@@ -49,6 +60,15 @@ M.defaults = {
             insert_paste = "<C-v>",
             normal_paste = "p",
             normal_paste_above = "P",
+        },
+    },
+    cite = {
+        enabled = true,
+        filetypes = { "markdown" },
+        url = "http://127.0.0.1:23119/better-bibtex/json-rpc",
+        timeout = 5,
+        keymaps = {
+            insert = "<leader>wc",
         },
     },
 }
