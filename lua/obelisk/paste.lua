@@ -338,7 +338,7 @@ function M.attach(buffer)
         end, {
             buffer = buffer,
             silent = true,
-            desc = "Obelisk: paste image from clipboard (insert)",
+            desc = "paste image from clipboard (insert)",
         })
     end
 
@@ -348,7 +348,7 @@ function M.attach(buffer)
         end, {
             buffer = buffer,
             silent = true,
-            desc = "Obelisk: paste image from clipboard (normal)",
+            desc = "paste image from clipboard (normal)",
         })
     end
 
@@ -358,7 +358,7 @@ function M.attach(buffer)
         end, {
             buffer = buffer,
             silent = true,
-            desc = "Obelisk: paste image from clipboard above (normal)",
+            desc = "paste image from clipboard above (normal)",
         })
     end
 end

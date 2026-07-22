@@ -561,7 +561,7 @@ function M.attach(buffer)
         end, {
             buffer = buffer,
             silent = true,
-            desc = "Obelisk: insert a Zotero citation at the cursor",
+            desc = "insert a Zotero citation at the cursor",
         })
     end
 
@@ -571,7 +571,7 @@ function M.attach(buffer)
         end, {
             buffer = buffer,
             silent = true,
-            desc = "Obelisk: open the PDF of the citation under the cursor",
+            desc = "open the PDF of the citation under the cursor",
         })
     end
 end

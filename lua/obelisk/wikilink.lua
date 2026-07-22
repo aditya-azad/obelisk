@@ -758,7 +758,7 @@ function M.attach(buffer)
         end, {
             buffer = buffer,
             silent = true,
-            desc = "Obelisk: open wikilink under cursor",
+            desc = "open wikilink under cursor",
         })
     end
 
@@ -768,7 +768,7 @@ function M.attach(buffer)
         end, {
             buffer = buffer,
             silent = true,
-            desc = "Obelisk: rename current file and update wikilinks",
+            desc = "rename current file and update wikilinks",
         })
     end
 
@@ -778,7 +778,7 @@ function M.attach(buffer)
         end, {
             buffer = buffer,
             silent = true,
-            desc = "Obelisk: find backlinks to current file",
+            desc = "find backlinks to current file",
         })
     end
 end
@@ -832,7 +832,7 @@ function M.setup(opts)
             M._new_note()
         end, {
             silent = true,
-            desc = "Obelisk: create a new note and open it",
+            desc = "create a new note and open it",
         })
     end
 
@@ -841,7 +841,7 @@ function M.setup(opts)
             M._find_note()
         end, {
             silent = true,
-            desc = "Obelisk: find and open a note with Telescope",
+            desc = "find and open a note with Telescope",
         })
     end
 end
