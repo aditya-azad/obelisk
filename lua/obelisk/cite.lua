@@ -12,6 +12,7 @@ local state = {
     keymaps = {
         insert = "<leader>wc",
         open_pdf = "<leader>wp",
+        references = "<leader>wR",
     },
 }
 
@@ -42,6 +43,50 @@ local function in_notes_dir(path)
         return false
     end
     return relpath_under(state.notes_dir, path) ~= nil
+end
+
+--- Find a loaded buffer whose file matches `path` (normalized comparison).
+---@param path string
+---@return integer|nil
+local function find_buf_for_path(path)
+    local norm = vim.fs.normalize(path)
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_loaded(b) then
+            local name = vim.api.nvim_buf_get_name(b)
+            if name ~= "" and vim.fs.normalize(name) == norm then
+                return b
+            end
+        end
+    end
+    return nil
+end
+
+--- Recursively collect files under `dir`, returning their paths relative to
+--- `dir` (e.g. `papers/note.md`). Directories themselves are not included.
+---@param dir string
+---@return string[]
+local function collect_files_recursive(dir)
+    local result = {}
+    local function walk(current_dir, prefix)
+        local entries = vim.fn.readdir(current_dir)
+        if not entries then
+            return
+        end
+        table.sort(entries)
+        for _, entry in ipairs(entries) do
+            if entry ~= "." and entry ~= ".." then
+                local full = current_dir .. "/" .. entry
+                local rel = prefix == "" and entry or (prefix .. "/" .. entry)
+                if vim.fn.isdirectory(full) == 0 then
+                    result[#result + 1] = rel
+                else
+                    walk(full, rel)
+                end
+            end
+        end
+    end
+    walk(dir, "")
+    return result
 end
 
 --- Open `path` in the operating system's default application. Uses
@@ -128,7 +173,78 @@ local function citation_under_cursor()
     end
 end
 
---- Format the author list of a CSL-JSON item into a short display string
+--- Find positions of `[@…]` citations in `line` that reference `citekey`.
+--- Handles locators (`[@key, p. 12]`), suppress-author prefixes (`[-@key]`),
+--- and multiple citations (`[@a; @b]`). Returns a list of matches where `col`
+--- is the 1-based byte index of the `@` introducing the matching key.
+---@param line string
+---@param citekey string
+---@return table[] matches { col = integer }
+local function find_citation_matches(line, citekey)
+    local matches = {}
+    local start = 1
+    while true do
+        local s, at_pos = line:find("%[%-?@", start)
+        if not s then
+            break
+        end
+        local e = line:find("%]", at_pos + 1)
+        if not e then
+            break
+        end
+        local inner = line:sub(at_pos, e - 1)
+        for pos, key in inner:gmatch("()@([^,;]+)") do
+            key = vim.trim(key)
+            if key == citekey then
+                matches[#matches + 1] = { col = at_pos + pos - 1 }
+            end
+        end
+        start = e + 1
+    end
+    return matches
+end
+
+--- Find every file under the notes directory that references `citekey` via a
+--- `[@…]` pandoc citation. Loaded buffers are read in-memory so unsaved edits
+--- are reflected. Returns a list of entries with the file path, line number,
+--- column of the `@`, and the line text.
+---@param citekey string
+---@return table[] entries { path, lnum, col, text }
+local function find_citation_references(citekey)
+    local root = state.notes_dir
+    if root == "" or citekey == "" then
+        return {}
+    end
+    local results = {}
+    for _, rel in ipairs(collect_files_recursive(root)) do
+        local fpath = root .. "/" .. rel
+        local lines = nil
+        local buf = find_buf_for_path(fpath)
+        if buf and vim.api.nvim_buf_is_loaded(buf) then
+            lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+        else
+            local f = io.open(fpath, "r")
+            if f then
+                local content = f:read("*a")
+                f:close()
+                lines = vim.split(content, "\r?\n")
+            end
+        end
+        if lines then
+            for i, line in ipairs(lines) do
+                for _, m in ipairs(find_citation_matches(line, citekey)) do
+                    results[#results + 1] = {
+                        path = fpath,
+                        lnum = i,
+                        col = m.col,
+                        text = line,
+                    }
+                end
+            end
+        end
+    end
+    return results
+end
 --- ("Smith", "Smith & Jones", "Smith et al.", or "").
 ---@param item table
 ---@return string
@@ -541,6 +657,74 @@ function M._open_citation_pdf(buffer)
     open_in_system_viewer(path)
 end
 
+--- Open a Telescope picker listing every file under the notes directory that
+--- references the `[@citekey]` under the cursor. Falls back to the key's
+--- default action when the cursor is not inside a citation. Selecting an entry
+--- opens the referencing file with the cursor on the `@citekey`.
+---@param buffer integer
+function M._citation_references(buffer)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return
+    end
+    local citekey = citation_under_cursor()
+    if not citekey then
+        local key = state.keymaps.references
+        if key ~= nil and key ~= "" then
+            vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, true, true), "n", false)
+        end
+        return
+    end
+    local entries = find_citation_references(citekey)
+    if #entries == 0 then
+        vim.notify("obelisk: no references to @" .. citekey, vim.log.levels.INFO)
+        return
+    end
+
+    local ok, pickers = pcall(require, "telescope.pickers")
+    if not ok then
+        vim.notify("obelisk: telescope.nvim is required for citation references", vim.log.levels.ERROR)
+        return
+    end
+    local finders = require("telescope.finders")
+    local conf = require("telescope.config").values
+    local actions = require("telescope.actions")
+    local action_state = require("telescope.actions.state")
+
+    pickers.new({}, {
+        prompt_title = "Obelisk References to @" .. citekey,
+        finder = finders.new_table({
+            results = entries,
+            entry_maker = function(entry)
+                local disp = string.format("%s:%d: %s",
+                    vim.fn.fnamemodify(entry.path, ":."), entry.lnum,
+                    (entry.text:gsub("^%s+", "")))
+                return {
+                    value = entry,
+                    display = disp,
+                    ordinal = disp,
+                    filename = entry.path,
+                    lnum = entry.lnum,
+                    col = entry.col,
+                }
+            end,
+        }),
+        previewer = conf.grep_previewer({}),
+        sorter = conf.generic_sorter({}),
+        attach_mappings = function(prompt_bufnr, _)
+            actions.select_default:replace(function()
+                local selection = action_state.get_selected_entry()
+                actions.close(prompt_bufnr)
+                if selection then
+                    local e = selection.value
+                    vim.cmd("edit " .. vim.fn.fnameescape(e.path))
+                    vim.api.nvim_win_set_cursor(0, { e.lnum, math.max(0, e.col - 1) })
+                end
+            end)
+            return true
+        end,
+    }):find()
+end
+
 ---@param buffer integer
 function M.attach(buffer)
     if not vim.api.nvim_buf_is_valid(buffer) then
@@ -574,9 +758,19 @@ function M.attach(buffer)
             desc = "open the PDF of the citation under the cursor",
         })
     end
+
+    if state.keymaps.references ~= nil and state.keymaps.references ~= "" then
+        vim.keymap.set("n", state.keymaps.references, function()
+            M._citation_references(buffer)
+        end, {
+            buffer = buffer,
+            silent = true,
+            desc = "find references to the citation under the cursor",
+        })
+    end
 end
 
----@param opts? { notes_dir?: string, filetypes?: string[], url?: string, timeout?: integer, keymaps?: { insert?: string, open_pdf?: string } }
+---@param opts? { notes_dir?: string, filetypes?: string[], url?: string, timeout?: integer, keymaps?: { insert?: string, open_pdf?: string, references?: string } }
 function M.setup(opts)
     opts = opts or {}
     if opts.notes_dir and opts.notes_dir ~= "" then
@@ -595,6 +789,9 @@ function M.setup(opts)
         end
         if opts.keymaps.open_pdf ~= nil then
             state.keymaps.open_pdf = opts.keymaps.open_pdf
+        end
+        if opts.keymaps.references ~= nil then
+            state.keymaps.references = opts.keymaps.references
         end
     end
     local ft_set = {}

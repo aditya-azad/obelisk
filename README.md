@@ -52,6 +52,12 @@ A small Neovim plugin for wiki-style note linking in Markdown.
   `<leader>wp`) to open the item's PDF attachment in your operating system's
   default viewer. The citekey is resolved via the Better BibTeX `item.attachments`
   JSON-RPC call; the first PDF attachment is preferred.
+- **Citation references picker** — place the cursor on a `[@citekey]` citation
+  and press the `references` keybinding (default `<leader>wR`) to open a
+  [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) picker
+  listing every file under the notes directory that cites that same key (via
+  `[@citekey]`, `[@citekey, p. 12]`, `[-@citekey]`, or `[@a; @citekey]`).
+  Selecting an entry opens the referencing file with the cursor on the `@citekey`.
 - **Configurable filetypes** — wikilink completion and the keymaps are
   attached only to the filetypes you choose (defaults to `markdown`).
 - **Notes-directory scoped** — all wikilink features only activate on files
@@ -68,8 +74,9 @@ A small Neovim plugin for wiki-style note linking in Markdown.
 
 - Neovim 0.9+ (uses `vim.keymap.set` and `vim.fn.complete`).
 - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) is required
-  for the backlinks picker (`<leader>wb`), the find picker (`<leader>wo`), and
-  the citation picker (`<leader>wc`). The other features work without it.
+  for the backlinks picker (`<leader>wb`), the find picker (`<leader>wo`), the
+  citation picker (`<leader>wc`), and the citation references picker
+  (`<leader>wR`). The other features work without it.
 - A clipboard tool is required for pasting images: `wl-clipboard` (Wayland),
   `xclip` (X11), or `pngpaste` (macOS). The feature is skipped silently (text
   paste still works) if none is found.
@@ -141,6 +148,7 @@ require("obelisk").setup({
         keymaps = {
             insert = "<leader>wc",            -- Telescope picker to insert a [@citekey]
             open_pdf = "<leader>wp",          -- open the PDF of the [@citekey] under the cursor
+            references = "<leader>wR",        -- Telescope picker of files citing the [@citekey] under the cursor
         },
     },
 })
@@ -170,9 +178,10 @@ require("obelisk").setup({
 | `cite.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the citation picker is active. |
 | `cite.url` | `string` | `"http://127.0.0.1:23119/better-bibtex/json-rpc"` | Better BibTeX JSON-RPC endpoint URL. Change this only if you run Zotero's local server on a different port. |
 | `cite.timeout` | `integer` | `5` | Seconds to wait for a single Better BibTeX search request before giving up. |
-| `cite.keymaps` | `table` | `{ insert = "<leader>wc", open_pdf = "<leader>wp" }` | Named citation keybindings (see below). |
+| `cite.keymaps` | `table` | `{ insert = "<leader>wc", open_pdf = "<leader>wp", references = "<leader>wR" }` | Named citation keybindings (see below). |
 | `cite.keymaps.insert` | `string` | `"<leader>wc"` | Normal-mode keybinding that opens a Telescope picker to search Zotero items by title/author/year and insert a `[@citekey]` pandoc citation at the cursor. It is attached only to buffers inside `notes_dir`. Set to `""` to disable it. |
 | `cite.keymaps.open_pdf` | `string` | `"<leader>wp"` | Normal-mode keybinding that opens the PDF attachment of the `[@citekey]` under the cursor in the default system viewer. The citekey (with any locator or suppress-author prefix stripped) is looked up via the Better BibTeX `item.attachments` JSON-RPC call and the first PDF attachment is preferred; if none of the attachments is a PDF the first file attachment is opened instead. Set to `""` to disable it. |
+| `cite.keymaps.references` | `string` | `"<leader>wR"` | Normal-mode keybinding that opens a Telescope picker listing every file under the notes directory that references the `[@citekey]` under the cursor (including `[@key, p. 12]`, `[-@key]`, and `[@a; @key]` forms). Selecting an entry opens the referencing file with the cursor on the `@citekey`. Falls back to the key's normal behavior when the cursor is not inside a citation. Set to `""` to disable it. |
 
 ## Usage
 
@@ -219,3 +228,11 @@ require("obelisk").setup({
   Locators, suppress-author prefixes (`[-@key]`), and multiple citations
   (`[@a; @b]`) are handled — the key closest to the cursor is used. Zotero
   must be running with the Better BibTeX plugin.
+- In normal mode, place the cursor anywhere inside a `[@citekey]` citation
+  (e.g. `[@smith2024]` or `[@smith2024, p. 12]`) and press `<leader>wR` (the
+  `references` keymap) to open a Telescope picker of every file under the notes
+  directory that cites that same key. Locators, suppress-author prefixes
+  (`[-@key]`), and multiple citations (`[@a; @b]`) are all matched. Selecting an
+  entry opens the referencing file with the cursor placed on the `@citekey`.
+  When the cursor is not on a citation the key falls back to its normal
+  behavior.

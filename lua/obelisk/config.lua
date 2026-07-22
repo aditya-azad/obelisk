@@ -26,6 +26,7 @@ local M = {}
 ---@class obelisk.CiteKeymaps
 ---@field insert string Keybinding (normal mode) that opens a Telescope picker to search Zotero items by title/author and insert a `[@citekey]` citation at the cursor
 ---@field open_pdf string Keybinding (normal mode) that opens the PDF attachment of the `[@citekey]` under the cursor in the default system viewer
+---@field references string Keybinding (normal mode) that opens a Telescope picker listing every file under the notes directory that references the `[@citekey]` under the cursor
 
 ---@class obelisk.CiteConfig
 ---@field enabled boolean Enable inserting Zotero Better BibTeX citation keys via a Telescope picker
@@ -71,6 +72,7 @@ M.defaults = {
         keymaps = {
             insert = "<leader>wc",
             open_pdf = "<leader>wp",
+            references = "<leader>wR",
         },
     },
 }
