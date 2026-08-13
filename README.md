@@ -2,6 +2,10 @@
 
 A small Neovim plugin for wiki-style note linking in Markdown.
 
+<hr/>
+DISCLAIMER: Check out the zotero release for zotero version of the software
+<hr/>
+
 ## Features
 
 - **`[[ ]]` wikilink completion** — typing `[[` in insert mode opens a
