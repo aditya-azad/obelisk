@@ -24,22 +24,22 @@ local M = {}
 ---@field keymaps obelisk.PasteKeymaps Named paste keybindings
 
 ---@class obelisk.CiteKeymaps
----@field insert string Keybinding (normal mode) that opens a Telescope picker to search Zotero items by title/author and insert a `[@citekey]` citation at the cursor
+---@field insert string Keybinding (normal mode) that opens a Telescope picker to search refree references by title/author and insert a `[@citekey]` citation at the cursor
 ---@field open_pdf string Keybinding (normal mode) that opens the PDF attachment of the `[@citekey]` under the cursor in the default system viewer
 ---@field references string Keybinding (normal mode) that opens a Telescope picker listing every file under the notes directory that references the `[@citekey]` under the cursor
 
 ---@class obelisk.CiteConfig
----@field enabled boolean Enable inserting Zotero Better BibTeX citation keys via a Telescope picker
+---@field enabled boolean Enable inserting refree reference citation keys via a Telescope picker
 ---@field filetypes string[] Filetypes where the citation picker is active
----@field url string Better BibTeX JSON-RPC endpoint URL
----@field timeout integer Seconds to wait for a single Better BibTeX search request before giving up
+---@field base_url string refree REST base URL (no trailing slash)
+---@field timeout integer Seconds to wait for a single refree search request before giving up
 ---@field keymaps obelisk.CiteKeymaps Citation keybindings
 
 ---@class obelisk.Config
 ---@field notes_dir string Directory where notes live; wikilink features only activate for files inside it
 ---@field wikilink obelisk.WikilinkConfig Configuration for [[ ]] wikilink completion
 ---@field paste obelisk.PasteConfig Configuration for pasting images from the clipboard as Markdown
----@field cite obelisk.CiteConfig Configuration for inserting Zotero Better BibTeX citations
+---@field cite obelisk.CiteConfig Configuration for inserting refree citations
 
 M.defaults = {
     notes_dir = vim.fn.getcwd() .. "/notes",
@@ -67,7 +67,7 @@ M.defaults = {
     cite = {
         enabled = true,
         filetypes = { "markdown" },
-        url = "http://127.0.0.1:23119/better-bibtex/json-rpc",
+        base_url = "http://127.0.0.1:23119",
         timeout = 5,
         keymaps = {
             insert = "<leader>wc",

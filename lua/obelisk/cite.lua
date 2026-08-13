@@ -7,7 +7,7 @@ local json = vim.json or {
 
 local state = {
     notes_dir = "",
-    url = "http://127.0.0.1:23119/better-bibtex/json-rpc",
+    base_url = "http://127.0.0.1:23119",
     timeout = 5,
     keymaps = {
         insert = "<leader>wc",
@@ -116,12 +116,13 @@ local function open_in_system_viewer(path)
     vim.notify("obelisk: no system file opener found (tried open, xdg-open)", vim.log.levels.ERROR)
 end
 
---- Extract the Better BibTeX citation key from a CSL-JSON item. BBT emits
---- `citation-key` (and a duplicate `citekey`); fall back to a few alternates.
+--- Extract the citation key from a refree `ReferenceRead` item. refree emits
+--- `citation_key`; a few CSL-JSON alternates are kept as fallbacks.
 ---@param item table
 ---@return string|nil
 local function citekey_of(item)
-    return item["citation-key"]
+    return item.citation_key
+        or item["citation-key"]
         or item.citekey
         or item.citationKey
         or item.key
@@ -245,23 +246,22 @@ local function find_citation_references(citekey)
     end
     return results
 end
---- ("Smith", "Smith & Jones", "Smith et al.", or "").
+--- Format the author list of a refree `ReferenceRead` item as a short string
+--- ("Smith", "Smith & Jones", "Smith et al.", or ""). refree sends `authors`
+--- as a list of "First Last" strings.
 ---@param item table
 ---@return string
 local function format_authors(item)
-    local authors = item.author or item.creators
+    local authors = item.authors
     if type(authors) ~= "table" then
         return ""
     end
     local names = {}
     for _, a in ipairs(authors) do
-        if type(a) == "table" then
-            if a.name then
-                names[#names + 1] = a.name
-            elseif a.family then
-                names[#names + 1] = a.family
-            elseif a.literal then
-                names[#names + 1] = a.literal
+        if type(a) == "string" then
+            local name = vim.trim(a)
+            if name ~= "" then
+                names[#names + 1] = name
             end
         end
     end
@@ -275,28 +275,17 @@ local function format_authors(item)
     return names[1] .. " et al."
 end
 
---- Extract a 4-digit year from a CSL-JSON item's `issued` date-parts or the
---- Zotero `date` string.
+--- Extract the year from a refree `ReferenceRead` item's `year` field.
 ---@param item table
 ---@return string
 local function format_year(item)
-    local issued = item.issued
-    if type(issued) == "table" and type(issued["date-parts"]) == "table" then
-        local first = issued["date-parts"][1]
-        if type(first) == "table" and first[1] ~= nil then
-            return tostring(first[1])
-        end
-    end
-    if type(item.date) == "string" then
-        local y = item.date:match("^(%d%d%d%d)")
-        if y then
-            return y
-        end
+    if item.year ~= nil then
+        return tostring(item.year)
     end
     return ""
 end
 
---- Build a Telescope entry from a CSL-JSON item. The entry's `value` is the
+--- Build a Telescope entry from a refree `ReferenceRead` item. The entry's `value` is the
 --- citation key; `display` is a readable one-line summary; `ordinal` carries
 --- every field a user might search by so the generic sorter keeps relevant
 --- results. Returns nil for items without a citation key.
@@ -336,65 +325,53 @@ local function make_entry(item)
     }
 end
 
---- Synchronously check that the Better BibTeX JSON-RPC endpoint is reachable
---- and ready. Returns `(true, nil)` on success or `(false, err_msg)`.
+--- Synchronously check that the refree REST endpoint is reachable and ready.
+--- Returns `(true, nil)` on success or `(false, err_msg)`.
 ---@return boolean, string|nil
-local function bbt_ready()
+local function refree_ready()
     if vim.fn.executable("curl") ~= 1 then
-        return false, "curl executable not found (required for Zotero integration)"
+        return false, "curl executable not found (required for refree integration)"
     end
-    local body = json.encode({ jsonrpc = "2.0", method = "api.ready", params = {} })
     local out = vim.fn.system({
         "curl", "-sS", "-m", "1",
-        state.url, "-X", "POST",
-        "-H", "Content-Type: application/json",
+        state.base_url .. "/heartbeat",
         "-H", "Accept: application/json",
-        "--data-binary", body,
     })
     if vim.v.shell_error ~= 0 then
-        return false, "cannot reach Better BibTeX at " .. state.url
-            .. " (is Zotero running with the Better BibTeX plugin?)"
+        return false, "cannot reach refree at " .. state.base_url
+            .. " (is refree running?)"
     end
     if out == "" then
-        return false, "empty response from Better BibTeX at " .. state.url
+        return false, "empty response from refree at " .. state.base_url
     end
     local ok, parsed = pcall(json.decode, out)
     if not ok or type(parsed) ~= "table" then
-        return false, "could not parse Better BibTeX response"
+        return false, "could not parse refree response"
     end
-    if parsed.error then
-        return false, parsed.error.message or "Better BibTeX error"
-    end
-    if not (parsed.result and parsed.result.betterbibtex) then
-        return false, "Better BibTeX not ready at " .. state.url
+    if parsed.status ~= "ok" then
+        return false, "refree not ready at " .. state.base_url
     end
     return true
 end
 
---- Asynchronously run a Better BibTeX `item.search` request for `query` and
---- invoke `callback(results, err)` when it completes. `results` is the CSL-JSON
---- item array (empty on success with no matches); `err` is a string on failure.
+--- Asynchronously run a refree reference search for `query` and invoke
+--- `callback(results, err)` when it completes. `results` is the `ReferenceRead`
+--- array (empty on success with no matches); `err` is a string on failure.
 --- Returns the job id so the caller can cancel it.
 ---@param query string
 ---@param callback fun(results: table[]|nil, err: string|nil)
 ---@return integer|nil
-local function bbt_search(query, callback)
+local function refree_search(query, callback)
     if vim.fn.executable("curl") ~= 1 then
         callback(nil, "curl executable not found")
         return nil
     end
-    local body = json.encode({
-        jsonrpc = "2.0",
-        method = "item.search",
-        params = { query },
-    })
     local chunks = {}
     local job_id = vim.fn.jobstart({
         "curl", "-sS", "-m", tostring(state.timeout),
-        state.url, "-X", "POST",
-        "-H", "Content-Type: application/json",
+        "-G", "--data-urlencode", "q=" .. query,
+        state.base_url .. "/references/search",
         "-H", "Accept: application/json",
-        "--data-binary", body,
     }, {
         on_stdout = function(_, data, _)
             if type(data) == "table" then
@@ -407,84 +384,69 @@ local function bbt_search(query, callback)
         end,
         on_exit = function(_, exit_code, _)
             if exit_code ~= 0 then
-                callback(nil, string.format("curl exited %d (is Zotero running?)", exit_code))
+                callback(nil, string.format("curl exited %d (is refree running?)", exit_code))
                 return
             end
             local raw = table.concat(chunks, "")
             if raw == "" then
-                callback(nil, "empty response from Better BibTeX")
+                callback(nil, "empty response from refree")
                 return
             end
             local ok, parsed = pcall(json.decode, raw)
-            if not ok then
-                callback(nil, "could not parse Better BibTeX response")
+            if not ok or type(parsed) ~= "table" then
+                callback(nil, "could not parse refree response")
                 return
             end
-            if type(parsed) == "table" and parsed.error then
-                callback(nil, parsed.error.message or "json-rpc error")
-                return
-            end
-            local result = parsed and parsed.result
-            if type(result) ~= "table" then
+            local results = parsed.results
+            if type(results) ~= "table" then
                 callback({}, nil)
                 return
             end
-            callback(result, nil)
+            callback(results, nil)
         end,
     })
     return job_id
 end
 
---- Synchronously run a Better BibTeX `item.attachments` request for `citekey`
---- and return the attachment array. Each attachment has a `path` field with the
---- absolute file path on disk (suitable for opening in a system viewer). Returns
---- `(attachments, nil)` on success or `(nil, err_msg)` on failure.
+--- Synchronously look up a single reference by citation key via refree's
+--- `GET /references/by-citation-key/<citekey>` endpoint. Returns the
+--- `ReferenceRead` item on success or `(nil, err_msg)` on failure (HTTP 404 →
+--- "no reference found for @<citekey>").
 ---@param citekey string
----@return table[]|nil, string|nil
-local function bbt_attachments(citekey)
+---@return table|nil, string|nil
+local function refree_lookup(citekey)
     if vim.fn.executable("curl") ~= 1 then
-        return nil, "curl executable not found (required for Zotero integration)"
+        return nil, "curl executable not found (required for refree integration)"
     end
-    local body = json.encode({
-        jsonrpc = "2.0",
-        method = "item.attachments",
-        params = { citekey },
-    })
     local out = vim.fn.system({
-        "curl", "-sS", "-m", tostring(state.timeout),
-        state.url, "-X", "POST",
-        "-H", "Content-Type: application/json",
+        "curl", "-sS", "-f", "-m", tostring(state.timeout),
+        state.base_url .. "/references/by-citation-key/" .. citekey,
         "-H", "Accept: application/json",
-        "--data-binary", body,
     })
     if vim.v.shell_error ~= 0 then
-        return nil, "cannot reach Better BibTeX at " .. state.url
-            .. " (is Zotero running with the Better BibTeX plugin?)"
+        if vim.v.shell_error == 22 then
+            return nil, "no reference found for @" .. citekey
+        end
+        return nil, "cannot reach refree at " .. state.base_url
+            .. " (is refree running?)"
     end
     if out == "" then
-        return nil, "empty response from Better BibTeX"
+        return nil, "empty response from refree"
     end
     local ok, parsed = pcall(json.decode, out)
     if not ok or type(parsed) ~= "table" then
-        return nil, "could not parse Better BibTeX response"
+        return nil, "could not parse refree response"
     end
-    if parsed.error then
-        return nil, parsed.error.message or "Better BibTeX error"
-    end
-    local result = parsed.result
-    if type(result) ~= "table" then
-        return nil, "no attachments found for @" .. citekey
-    end
-    return result, nil
+    return parsed, nil
 end
 
---- Build a Telescope finder that queries Better BibTeX on every keystroke.
+--- Build a Telescope finder that queries refree on every keystroke.
 --- The finder implements the `__call(prompt, process_result, process_complete)`
 --- contract used by telescope's picker loop, and uses a generation counter so
 --- responses from cancelled (superseded) requests never feed the picker.
 ---@param entry_maker fun(item: table): table|nil
 ---@return table
-local function new_bbt_finder(entry_maker)
+local function new_refree_finder(entry_maker)
     local obj = {}
     obj.__index = obj
     local current_job = nil
@@ -500,14 +462,14 @@ local function new_bbt_finder(entry_maker)
         end
 
         local query = prompt or ""
-        -- BBT's `item.search("")` returns nothing in current versions, so skip
-        -- the request for an empty prompt and show an empty list instead.
+        -- refree's search returns nothing for an empty query, so skip the
+        -- request and show an empty list instead.
         if query == "" then
             process_complete()
             return
         end
 
-        current_job = bbt_search(query, function(results, err)
+        current_job = refree_search(query, function(results, err)
             if gen ~= current_gen then
                 return
             end
@@ -516,7 +478,7 @@ local function new_bbt_finder(entry_maker)
                 if not notified then
                     notified = true
                     vim.schedule(function()
-                        vim.notify("obelisk: Zotero search failed: " .. err, vim.log.levels.WARN)
+                        vim.notify("obelisk: refree search failed: " .. err, vim.log.levels.WARN)
                     end)
                 end
                 process_complete()
@@ -574,15 +536,15 @@ local function insert_citation(buffer, citekey)
     vim.cmd("startinsert")
 end
 
---- Check that Better BibTeX is reachable and open a Telescope picker that
---- searches the Zotero library by title/author/year. Selecting an entry
+--- Check that refree is reachable and open a Telescope picker that
+--- searches the refree library by title/author/year. Selecting an entry
 --- inserts `[@citekey]` at the cursor.
 ---@param buffer integer
 function M._cite(buffer)
     if not vim.api.nvim_buf_is_valid(buffer) then
         return
     end
-    local ready, err = bbt_ready()
+    local ready, err = refree_ready()
     if not ready then
         vim.notify("obelisk: " .. err, vim.log.levels.ERROR)
         return
@@ -598,8 +560,8 @@ function M._cite(buffer)
     local action_state = require("telescope.actions.state")
 
     pickers.new({}, {
-        prompt_title = "Obelisk Citations (Zotero)",
-        finder = new_bbt_finder(make_entry),
+        prompt_title = "Obelisk Citations (refree)",
+        finder = new_refree_finder(make_entry),
         sorter = conf.generic_sorter({}),
         attach_mappings = function(prompt_bufnr, _)
             actions.select_default:replace(function()
@@ -614,11 +576,10 @@ function M._cite(buffer)
     }):find()
 end
 
---- Open the PDF attachment of the `[@citekey]` under the cursor in the default
---- system viewer. Falls back to the key's default action when the cursor is not
---- inside a citation. Queries Better BibTeX for the item's attachments and
---- prefers the first PDF; if no PDF is found, opens the first attachment with a
---- file path.
+--- Open the PDF of the `[@citekey]` under the cursor in the default system
+--- viewer. Falls back to the key's default action when the cursor is not
+--- inside a citation. Looks up the reference via refree's citekey endpoint
+--- and opens its stored `pdf_path`.
 ---@param buffer integer
 function M._open_citation_pdf(buffer)
     if not vim.api.nvim_buf_is_valid(buffer) then
@@ -632,26 +593,14 @@ function M._open_citation_pdf(buffer)
         end
         return
     end
-    local attachments, err = bbt_attachments(citekey)
+    local item, err = refree_lookup(citekey)
     if err then
         vim.notify("obelisk: " .. err, vim.log.levels.ERROR)
         return
     end
-    local pdf_path = nil
-    local any_path = nil
-    for _, att in ipairs(attachments) do
-        local p = att.path
-        if type(p) == "string" and p ~= "" then
-            any_path = p
-            if p:lower():match("%.pdf$") then
-                pdf_path = p
-                break
-            end
-        end
-    end
-    local path = pdf_path or any_path
-    if not path then
-        vim.notify("obelisk: no file attachment found for @" .. citekey, vim.log.levels.WARN)
+    local path = item.pdf_path
+    if type(path) ~= "string" or path == "" then
+        vim.notify("obelisk: no PDF stored for @" .. citekey, vim.log.levels.WARN)
         return
     end
     open_in_system_viewer(path)
@@ -745,7 +694,7 @@ function M.attach(buffer)
         end, {
             buffer = buffer,
             silent = true,
-            desc = "insert a Zotero citation at the cursor",
+            desc = "insert a refree citation at the cursor",
         })
     end
 
@@ -770,14 +719,14 @@ function M.attach(buffer)
     end
 end
 
----@param opts? { notes_dir?: string, filetypes?: string[], url?: string, timeout?: integer, keymaps?: { insert?: string, open_pdf?: string, references?: string } }
+---@param opts? { notes_dir?: string, filetypes?: string[], base_url?: string, timeout?: integer, keymaps?: { insert?: string, open_pdf?: string, references?: string } }
 function M.setup(opts)
     opts = opts or {}
     if opts.notes_dir and opts.notes_dir ~= "" then
         state.notes_dir = vim.fs.normalize(vim.fn.expand(opts.notes_dir))
     end
-    if opts.url and opts.url ~= "" then
-        state.url = opts.url
+    if opts.base_url and opts.base_url ~= "" then
+        state.base_url = opts.base_url
     end
     if opts.timeout and opts.timeout > 0 then
         state.timeout = opts.timeout

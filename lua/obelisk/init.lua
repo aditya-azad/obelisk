@@ -33,7 +33,7 @@ function M.setup(opts)
         cite.setup({
             notes_dir = M.config.notes_dir,
             filetypes = M.config.cite.filetypes,
-            url = M.config.cite.url,
+            base_url = M.config.cite.base_url,
             timeout = M.config.cite.timeout,
             keymaps = M.config.cite.keymaps,
         })

@@ -40,18 +40,17 @@ A small Neovim plugin for wiki-style note linking in Markdown.
   / GUI / middle-click paste) into a note saves the image under
   `notes_dir/assets` and inserts a `![](assets/…)` link at the cursor. Text
   pastes pass through unchanged when the clipboard has no image.
-- **Insert Zotero citations** — press the `insert` keybinding (default
+- **Insert citations** — press the `insert` keybinding (default
   `<leader>wc`) to open a [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
-  picker that searches your Zotero library live (by title, author, or year)
-  via the [Better BibTeX](https://retorque.re/zotero-better-bibtex/) JSON-RPC
-  endpoint. Selecting an entry inserts a pandoc-style `[@citekey]` citation
-  (e.g. `[@smith2024example]`) at the cursor and leaves you in insert mode
-  right after it.
+  picker that searches your refree library live (by title, author, or year)
+  via the refree REST API. Selecting an entry inserts a pandoc-style
+  `[@citekey]` citation (e.g. `[@smith2024example]`) at the cursor and leaves
+  you in insert mode right after it.
 - **Open citation PDFs** — place the cursor on a `[@citekey]` citation (e.g.
   `[@smith2024, p. 12]`) and press the `open_pdf` keybinding (default
-  `<leader>wp`) to open the item's PDF attachment in your operating system's
-  default viewer. The citekey is resolved via the Better BibTeX `item.attachments`
-  JSON-RPC call; the first PDF attachment is preferred.
+  `<leader>wp`) to open the item's PDF in your operating system's default
+  viewer. The citekey is resolved via refree's citekey lookup; the reference's
+  stored PDF is opened.
 - **Citation references picker** — place the cursor on a `[@citekey]` citation
   and press the `references` keybinding (default `<leader>wR`) to open a
   [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) picker
@@ -80,13 +79,9 @@ A small Neovim plugin for wiki-style note linking in Markdown.
 - A clipboard tool is required for pasting images: `wl-clipboard` (Wayland),
   `xclip` (X11), or `pngpaste` (macOS). The feature is skipped silently (text
   paste still works) if none is found.
-- [Zotero](https://www.zotero.org/) with the
-  [Better BibTeX](https://retorque.re/zotero-better-bibtex/) plugin is required
-  for the citation picker (`<leader>wc`). Zotero must be running while you use
-  it, and the local API must be enabled (Settings → Advanced → *Allow other
-  applications on this computer to communicate with Zotero*). `curl` is used to
-  talk to the JSON-RPC endpoint. The other features work without it.
-
+- refree running locally is required for the citation picker (`<leader>wc`).
+  `curl` is used to talk to the refree REST API. The other features work
+  without it.
 ## Installation
 
 ### [lazy.nvim](https://github.com/folke/lazy.nvim)
@@ -141,9 +136,9 @@ require("obelisk").setup({
         },
     },
     cite = {
-        enabled = true,                       -- enable Zotero citation insertion
+        enabled = true,                       -- enable refree citation insertion
         filetypes = { "markdown" },           -- where the feature is active
-        url = "http://127.0.0.1:23119/better-bibtex/json-rpc",  -- BBT JSON-RPC endpoint
+        base_url = "http://127.0.0.1:23119",  -- refree REST base URL
         timeout = 5,                          -- seconds to wait per search request
         keymaps = {
             insert = "<leader>wc",            -- Telescope picker to insert a [@citekey]
@@ -174,13 +169,13 @@ require("obelisk").setup({
 | `paste.keymaps.insert_paste` | `string` | `"<C-v>"` | Insert-mode key intercepted to paste images. When the clipboard has no image it falls back to the key's normal behavior (insert-next-char-literally in a terminal, or paste in a GUI). Set to `""` to disable it. |
 | `paste.keymaps.normal_paste` | `string` | `"p"` | Normal-mode key intercepted to paste images below the cursor. When the clipboard has no image it falls back to the normal put (preserving any count and register, e.g. `3p`, `"ap`). Set to `""` to disable it. |
 | `paste.keymaps.normal_paste_above` | `string` | `"P"` | Normal-mode key intercepted to paste images above the cursor, with the same fallback as `normal_paste`. Set to `""` to disable it. |
-| `cite.enabled` | `boolean` | `true` | Enable the Zotero Better BibTeX citation picker. |
+| `cite.enabled` | `boolean` | `true` | Enable the refree citation picker. |
 | `cite.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the citation picker is active. |
-| `cite.url` | `string` | `"http://127.0.0.1:23119/better-bibtex/json-rpc"` | Better BibTeX JSON-RPC endpoint URL. Change this only if you run Zotero's local server on a different port. |
-| `cite.timeout` | `integer` | `5` | Seconds to wait for a single Better BibTeX search request before giving up. |
+| `cite.base_url` | `string` | `"http://127.0.0.1:23119"` | refree REST base URL (no trailing slash). Change only if refree runs on a different port. |
+| `cite.timeout` | `integer` | `5` | Seconds to wait for a single refree search request before giving up. |
 | `cite.keymaps` | `table` | `{ insert = "<leader>wc", open_pdf = "<leader>wp", references = "<leader>wR" }` | Named citation keybindings (see below). |
-| `cite.keymaps.insert` | `string` | `"<leader>wc"` | Normal-mode keybinding that opens a Telescope picker to search Zotero items by title/author/year and insert a `[@citekey]` pandoc citation at the cursor. It is attached only to buffers inside `notes_dir`. Set to `""` to disable it. |
-| `cite.keymaps.open_pdf` | `string` | `"<leader>wp"` | Normal-mode keybinding that opens the PDF attachment of the `[@citekey]` under the cursor in the default system viewer. The citekey (with any locator or suppress-author prefix stripped) is looked up via the Better BibTeX `item.attachments` JSON-RPC call and the first PDF attachment is preferred; if none of the attachments is a PDF the first file attachment is opened instead. Set to `""` to disable it. |
+| `cite.keymaps.insert` | `string` | `"<leader>wc"` | Normal-mode keybinding that opens a Telescope picker to search refree references by title/author/year and insert a `[@citekey]` pandoc citation at the cursor. It is attached only to buffers inside `notes_dir`. Set to `""` to disable it. |
+| `cite.keymaps.open_pdf` | `string` | `"<leader>wp"` | Normal-mode keybinding that opens the PDF of the `[@citekey]` under the cursor in the default system viewer. The citekey (with any locator or suppress-author prefix stripped) is looked up via refree's citekey lookup; the reference's stored PDF is opened. Set to `""` to disable it. |
 | `cite.keymaps.references` | `string` | `"<leader>wR"` | Normal-mode keybinding that opens a Telescope picker listing every file under the notes directory that references the `[@citekey]` under the cursor (including `[@key, p. 12]`, `[-@key]`, and `[@a; @key]` forms). Selecting an entry opens the referencing file with the cursor on the `@citekey`. Falls back to the key's normal behavior when the cursor is not inside a citation. Set to `""` to disable it. |
 
 ## Usage
@@ -216,18 +211,17 @@ require("obelisk").setup({
   (no image in the clipboard) works exactly as normal. Files outside
   `notes_dir` are never affected.
 - In normal mode inside a note, press `<leader>wc` (the `insert` keymap) to
-  open the Zotero citation picker. Type part of a paper's title or an author's
-  name; results stream in live from Better BibTeX as you type. Selecting an
-  entry inserts `[@citekey]` (e.g. `[@smith2024example]`) at the cursor and
-  leaves you in insert mode right after the closing `]`, so you can keep
-  writing or add a locator like `[@smith2024, p. 12]`. Zotero must be running
-  with the Better BibTeX plugin for this to work.
+  open the citation picker. Type part of a paper's title or an author's name;
+  results stream in live from refree as you type. Selecting an entry inserts
+  `[@citekey]` (e.g. `[@smith2024example]`) at the cursor and leaves you in
+  insert mode right after the closing `]`, so you can keep writing or add a
+  locator like `[@smith2024, p. 12]`. refree must be running for this to work.
 - In normal mode, place the cursor anywhere inside a `[@citekey]` citation
   (e.g. `[@smith2024]` or `[@smith2024, p. 12]`) and press `<leader>wp` (the
   `open_pdf` keymap) to open the item's PDF in your system's default viewer.
   Locators, suppress-author prefixes (`[-@key]`), and multiple citations
-  (`[@a; @b]`) are handled — the key closest to the cursor is used. Zotero
-  must be running with the Better BibTeX plugin.
+  (`[@a; @b]`) are handled — the key closest to the cursor is used. refree
+  must be running.
 - In normal mode, place the cursor anywhere inside a `[@citekey]` citation
   (e.g. `[@smith2024]` or `[@smith2024, p. 12]`) and press `<leader>wR` (the
   `references` keymap) to open a Telescope picker of every file under the notes
