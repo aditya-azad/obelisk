@@ -134,7 +134,7 @@ end
 --- cursor is inside the brackets but not directly on a key, the closest key is
 --- returned. Returns nil when the cursor is not inside any `[@…]`.
 ---@return string|nil
-local function citation_under_cursor()
+local function pandoc_citation_under_cursor()
     local line = vim.fn.getline(".")
     local col = vim.fn.col(".")
     local start = 1
@@ -181,7 +181,7 @@ end
 ---@param line string
 ---@param citekey string
 ---@return table[] matches { col = integer }
-local function find_citation_matches(line, citekey)
+local function pandoc_find_matches(line, citekey)
     local matches = {}
     local start = 1
     while true do
@@ -205,10 +205,208 @@ local function find_citation_matches(line, citekey)
     return matches
 end
 
+--- Scan `line` for LaTeX citation commands (any command whose name contains
+--- "cite", e.g. `\cite`, `\citet`, `\citep`, `\citeauthor`, `\citeyear`,
+--- `\parencite`, `\textcite`, `\footcite`, `\nocite`) and return each with its
+--- key positions. Optional `[...]` arguments between the command name and the
+--- mandatory `{...}` (e.g. `\cite[p. 12][]{key}`) are skipped. Keys inside
+--- `{...}` are comma-separated; each key's absolute byte span in `line` is
+--- recorded. Unbalanced braces abort that command.
+---@param line string
+---@return table[] commands { cmd_start, cmd_end, keys = { { start_, end_, key } } }
+local function bibtex_find_commands(line)
+    local cmds = {}
+    local i = 1
+    local n = #line
+    while i <= n do
+        local bs = line:find("\\", i, true)
+        if not bs then
+            break
+        end
+        local name_start = bs + 1
+        local j = name_start
+        while j <= n and line:sub(j, j):match("%a") ~= nil do
+            j = j + 1
+        end
+        local name = line:sub(name_start, j - 1)
+        local pos = j
+        -- skip optional [...] arguments
+        while pos <= n and line:sub(pos, pos) == "[" do
+            local close = line:find("]", pos, true)
+            if not close then
+                pos = pos + 1
+                break
+            end
+            pos = close + 1
+        end
+        if name ~= "" and name:lower():find("cite", 1, true) ~= nil
+            and pos <= n and line:sub(pos, pos) == "{" then
+            local close = line:find("}", pos, true)
+            if close then
+                local keys = {}
+                local keys_text = line:sub(pos + 1, close - 1)
+                for kstart, key in keys_text:gmatch("()([^,]+)") do
+                    local lead = 0
+                    while lead < #key and key:sub(lead + 1, lead + 1):match("%s") do
+                        lead = lead + 1
+                    end
+                    local trail = 0
+                    while trail < #key - lead
+                        and key:sub(#key - trail, #key - trail):match("%s") do
+                        trail = trail + 1
+                    end
+                    local trimmed = key:sub(lead + 1, #key - trail)
+                    if trimmed ~= "" then
+                        local abs_start = pos + kstart + lead
+                        keys[#keys + 1] = {
+                            start_ = abs_start,
+                            end_ = abs_start + #trimmed - 1,
+                            key = trimmed,
+                        }
+                    end
+                end
+                cmds[#cmds + 1] = { cmd_start = bs, cmd_end = close, keys = keys }
+                i = close + 1
+            else
+                i = pos + 1
+            end
+        else
+            i = bs + 1
+        end
+    end
+    return cmds
+end
+
+--- Return the citation key under the cursor when it sits within a LaTeX
+--- `\cite{...}`-style command (locators like `\cite[p. 12]{key}` and
+--- comma-separated `\cite{a,b}` are handled). When the cursor is inside the
+--- command span but not directly on a key, the closest key is returned.
+--- Returns nil when the cursor is not inside any citation command.
+---@return string|nil
+local function bibtex_citation_under_cursor()
+    local line = vim.fn.getline(".")
+    local col = vim.fn.col(".")
+    for _, cmd in ipairs(bibtex_find_commands(line)) do
+        if col >= cmd.cmd_start and col <= cmd.cmd_end then
+            local found = nil
+            local best = math.huge
+            for _, k in ipairs(cmd.keys) do
+                if col >= k.start_ and col <= k.end_ then
+                    return k.key
+                end
+                local d = math.min(math.abs(col - k.start_), math.abs(col - k.end_))
+                if d < best then
+                    best = d
+                    found = k.key
+                end
+            end
+            return found
+        end
+    end
+    return nil
+end
+
+--- Find positions of LaTeX citation commands in `line` that reference
+--- `citekey`. Returns a list of matches where `col` is the 1-based byte index
+--- of the key's first character.
+---@param line string
+---@param citekey string
+---@return table[] matches { col = integer }
+local function bibtex_find_matches(line, citekey)
+    local matches = {}
+    for _, cmd in ipairs(bibtex_find_commands(line)) do
+        for _, k in ipairs(cmd.keys) do
+            if k.key == citekey then
+                matches[#matches + 1] = { col = k.start_ }
+            end
+        end
+    end
+    return matches
+end
+
+--- A citation style describes how citations are written in a set of
+--- filetypes: how to parse the key under the cursor, how to find matching
+--- positions in a line, what text to insert, and which features the style
+--- supports. Styles let the same refree-backed picker serve Markdown notes
+--- (pandoc `[@key]`) and LaTeX sources (`\cite{key}`) without duplicating the
+--- refree/telescope plumbing.
+---@class obelisk.CiteStyle
+---@field filetypes table<string, boolean> filetypes this style handles
+---@field requires_notes_dir boolean only attach on buffers inside notes_dir
+---@field supports_insert boolean attach the insert keymap
+---@field supports_open_pdf boolean attach the open_pdf keymap
+---@field supports_references boolean attach the references keymap
+---@field parse_under_cursor fun():string|nil extract the citekey under the cursor
+---@field find_matches fun(line:string, citekey:string):table[] { col = integer }
+---@field insert_text fun(citekey:string):string text inserted at the cursor
+
+---@type table<string, obelisk.CiteStyle>
+local styles = {
+    pandoc = {
+        filetypes = { markdown = true, pandoc = true },
+        requires_notes_dir = true,
+        supports_insert = true,
+        supports_open_pdf = true,
+        supports_references = true,
+        parse_under_cursor = pandoc_citation_under_cursor,
+        find_matches = pandoc_find_matches,
+        insert_text = function(citekey)
+            return "[@" .. citekey .. "]"
+        end,
+    },
+    bibtex = {
+        filetypes = { tex = true, latex = true, plaintex = true },
+        requires_notes_dir = false,
+        supports_insert = true,
+        supports_open_pdf = true,
+        supports_references = false,
+        parse_under_cursor = bibtex_citation_under_cursor,
+        find_matches = bibtex_find_matches,
+        insert_text = function(citekey)
+            return "\\cite{" .. citekey .. "}"
+        end,
+    },
+}
+
+--- Return the citation style handling `buffer`'s filetype, or nil.
+---@param buffer integer
+---@return obelisk.CiteStyle|nil
+local function style_for_buffer(buffer)
+    if not vim.api.nvim_buf_is_valid(buffer) then
+        return nil
+    end
+    local ft = vim.bo[buffer].filetype
+    for _, style in pairs(styles) do
+        if style.filetypes[ft] then
+            return style
+        end
+    end
+    return nil
+end
+
+--- Return the citation key under the cursor for the current buffer's style.
+---@return string|nil
+local function citation_under_cursor()
+    local style = style_for_buffer(0)
+    return style and style.parse_under_cursor() or nil
+end
+
+--- Find citation matches in `line` for `citekey` using the current buffer's
+--- style (pandoc when the buffer has no known style, e.g. during a references
+--- search triggered from a markdown buffer).
+---@param line string
+---@param citekey string
+---@return table[] matches { col = integer }
+local function find_citation_matches(line, citekey)
+    local style = style_for_buffer(0) or styles.pandoc
+    return style.find_matches(line, citekey)
+end
+
 --- Find every file under the notes directory that references `citekey` via a
---- `[@…]` pandoc citation. Loaded buffers are read in-memory so unsaved edits
---- are reflected. Returns a list of entries with the file path, line number,
---- column of the `@`, and the line text.
+--- citation of the current buffer's style (`[@…]` pandoc or `\cite{…}` LaTeX).
+--- Loaded buffers are read in-memory so unsaved edits are reflected. Returns a
+--- list of entries with the file path, line number, column of the citekey, and
+--- the line text.
 ---@param citekey string
 ---@return table[] entries { path, lnum, col, text }
 local function find_citation_references(citekey)
@@ -516,15 +714,20 @@ local function new_refree_finder(entry_maker)
     })
 end
 
---- Insert `[@citekey]` at the current cursor position in `buffer`, then enter
---- insert mode with the cursor placed right after the closing `]`.
+--- Insert a citation for `citekey` at the current cursor position in `buffer`,
+--- using the buffer's citation style (`[@citekey]` for Markdown, `\cite{key}`
+--- for LaTeX), then enter insert mode right after the inserted text.
 ---@param buffer integer
 ---@param citekey string
 local function insert_citation(buffer, citekey)
     if not vim.api.nvim_buf_is_valid(buffer) then
         return
     end
-    local text = "[@" .. citekey .. "]"
+    local style = style_for_buffer(buffer)
+    if not style then
+        return
+    end
+    local text = style.insert_text(citekey)
     local row, col = unpack(vim.api.nvim_win_get_cursor(0))
     local lines = vim.api.nvim_buf_get_lines(buffer, row - 1, row, false)
     local line = lines[1] or ""
@@ -682,13 +885,19 @@ function M.attach(buffer)
     if vim.b[buffer].obelisk_cite_attached then
         return
     end
-    local path = vim.api.nvim_buf_get_name(buffer)
-    if not in_notes_dir(path) then
+    local style = style_for_buffer(buffer)
+    if not style then
         return
+    end
+    if style.requires_notes_dir then
+        local path = vim.api.nvim_buf_get_name(buffer)
+        if not in_notes_dir(path) then
+            return
+        end
     end
     vim.b[buffer].obelisk_cite_attached = true
 
-    if state.keymaps.insert ~= nil and state.keymaps.insert ~= "" then
+    if style.supports_insert and state.keymaps.insert ~= nil and state.keymaps.insert ~= "" then
         vim.keymap.set("n", state.keymaps.insert, function()
             M._cite(buffer)
         end, {
@@ -698,7 +907,7 @@ function M.attach(buffer)
         })
     end
 
-    if state.keymaps.open_pdf ~= nil and state.keymaps.open_pdf ~= "" then
+    if style.supports_open_pdf and state.keymaps.open_pdf ~= nil and state.keymaps.open_pdf ~= "" then
         vim.keymap.set("n", state.keymaps.open_pdf, function()
             M._open_citation_pdf(buffer)
         end, {
@@ -708,7 +917,7 @@ function M.attach(buffer)
         })
     end
 
-    if state.keymaps.references ~= nil and state.keymaps.references ~= "" then
+    if style.supports_references and state.keymaps.references ~= nil and state.keymaps.references ~= "" then
         vim.keymap.set("n", state.keymaps.references, function()
             M._citation_references(buffer)
         end, {
@@ -731,7 +940,7 @@ function M.setup(opts)
     if opts.timeout and opts.timeout > 0 then
         state.timeout = opts.timeout
     end
-    local filetypes = opts.filetypes or { "markdown" }
+    local filetypes = opts.filetypes or { "markdown", "tex" }
     if opts.keymaps ~= nil then
         if opts.keymaps.insert ~= nil then
             state.keymaps.insert = opts.keymaps.insert

@@ -45,20 +45,24 @@ A small Neovim plugin for wiki-style note linking in Markdown.
 - **Insert citations** — press the `insert` keybinding (default
   `<leader>wc`) to open a [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
   picker that searches your refree library live (by title, author, or year)
-  via the refree REST API. Selecting an entry inserts a pandoc-style
-  `[@citekey]` citation (e.g. `[@smith2024example]`) at the cursor and leaves
-  you in insert mode right after it.
-- **Open citation PDFs** — place the cursor on a `[@citekey]` citation (e.g.
-  `[@smith2024, p. 12]`) and press the `open_pdf` keybinding (default
-  `<leader>wp`) to open the item's PDF in your operating system's default
-  viewer. The citekey is resolved via refree's citekey lookup; the reference's
-  stored PDF is opened.
-- **Citation references picker** — place the cursor on a `[@citekey]` citation
-  and press the `references` keybinding (default `<leader>wR`) to open a
-  [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) picker
-  listing every file under the notes directory that cites that same key (via
-  `[@citekey]`, `[@citekey, p. 12]`, `[-@citekey]`, or `[@a; @citekey]`).
-  Selecting an entry opens the referencing file with the cursor on the `@citekey`.
+  via the refree REST API. Selecting an entry inserts a citation at the
+  cursor in the style of the current buffer: a pandoc-style `[@citekey]`
+  (e.g. `[@smith2024example]`) in Markdown, or a `\cite{citekey}` (e.g.
+  `\cite{smith2024example}`) in LaTeX. You're left in insert mode right
+  after the inserted text.
+- **Open citation PDFs** — place the cursor on a citation (`[@citekey]` in
+  Markdown, `\cite{citekey}` in LaTeX; locators like `\cite[p. 12]{key}` and
+  multiple keys `\cite{a, b}` are handled) and press the `open_pdf`
+  keybinding (default `<leader>wp`) to open the item's PDF in your operating
+  system's default viewer. The citekey is resolved via refree's citekey
+  lookup; the reference's stored PDF is opened.
+- **Citation references picker** *(Markdown only)* — place the cursor on a
+  `[@citekey]` citation and press the `references` keybinding (default
+  `<leader>wR`) to open a [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
+  picker listing every file under the notes directory that cites that same
+  key (via `[@citekey]`, `[@citekey, p. 12]`, `[-@citekey]`, or
+  `[@a; @citekey]`). Selecting an entry opens the referencing file with the
+  cursor on the `@citekey`.
 - **Configurable filetypes** — wikilink completion and the keymaps are
   attached only to the filetypes you choose (defaults to `markdown`).
 - **Notes-directory scoped** — all wikilink features only activate on files
@@ -139,13 +143,13 @@ require("obelisk").setup({
     },
     cite = {
         enabled = true,                       -- enable refree citation insertion
-        filetypes = { "markdown" },           -- where the feature is active
+        filetypes = { "markdown", "tex" },    -- where the feature is active
         base_url = "http://127.0.0.1:23119",  -- refree REST base URL
         timeout = 5,                          -- seconds to wait per search request
         keymaps = {
-            insert = "<leader>wc",            -- Telescope picker to insert a [@citekey]
-            open_pdf = "<leader>wp",          -- open the PDF of the [@citekey] under the cursor
-            references = "<leader>wR",        -- Telescope picker of files citing the [@citekey] under the cursor
+            insert = "<leader>wc",            -- Telescope picker to insert a citation ([@key] / \cite{key})
+            open_pdf = "<leader>wp",          -- open the PDF of the citation under the cursor
+            references = "<leader>wR",        -- Telescope picker of files citing the [@citekey] under the cursor (Markdown only)
         },
     },
 })
@@ -172,13 +176,13 @@ require("obelisk").setup({
 | `paste.keymaps.normal_paste` | `string` | `"p"` | Normal-mode key intercepted to paste images below the cursor. When the clipboard has no image it falls back to the normal put (preserving any count and register, e.g. `3p`, `"ap`). Set to `""` to disable it. |
 | `paste.keymaps.normal_paste_above` | `string` | `"P"` | Normal-mode key intercepted to paste images above the cursor, with the same fallback as `normal_paste`. Set to `""` to disable it. |
 | `cite.enabled` | `boolean` | `true` | Enable the refree citation picker. |
-| `cite.filetypes` | `string[]` | `{ "markdown" }` | Filetypes where the citation picker is active. |
+| `cite.filetypes` | `string[]` | `{ "markdown", "tex" }` | Filetypes where the citation picker is active. In `markdown` (and `pandoc`) buffers citations use the pandoc `[@citekey]` style and all three keymaps are attached. In `tex`/`latex`/`plaintex` buffers citations use the LaTeX `\cite{citekey}` style and only `insert` and `open_pdf` are attached (`references` is not, since LaTeX citation-scoping across a project differs from the notes-tree search). |
 | `cite.base_url` | `string` | `"http://127.0.0.1:23119"` | refree REST base URL (no trailing slash). Change only if refree runs on a different port. |
 | `cite.timeout` | `integer` | `5` | Seconds to wait for a single refree search request before giving up. |
 | `cite.keymaps` | `table` | `{ insert = "<leader>wc", open_pdf = "<leader>wp", references = "<leader>wR" }` | Named citation keybindings (see below). |
-| `cite.keymaps.insert` | `string` | `"<leader>wc"` | Normal-mode keybinding that opens a Telescope picker to search refree references by title/author/year and insert a `[@citekey]` pandoc citation at the cursor. It is attached only to buffers inside `notes_dir`. Set to `""` to disable it. |
-| `cite.keymaps.open_pdf` | `string` | `"<leader>wp"` | Normal-mode keybinding that opens the PDF of the `[@citekey]` under the cursor in the default system viewer. The citekey (with any locator or suppress-author prefix stripped) is looked up via refree's citekey lookup; the reference's stored PDF is opened. Set to `""` to disable it. |
-| `cite.keymaps.references` | `string` | `"<leader>wR"` | Normal-mode keybinding that opens a Telescope picker listing every file under the notes directory that references the `[@citekey]` under the cursor (including `[@key, p. 12]`, `[-@key]`, and `[@a; @key]` forms). Selecting an entry opens the referencing file with the cursor on the `@citekey`. Falls back to the key's normal behavior when the cursor is not inside a citation. Set to `""` to disable it. |
+| `cite.keymaps.insert` | `string` | `"<leader>wc"` | Normal-mode keybinding that opens a Telescope picker to search refree references by title/author/year and insert a citation at the cursor — `[@citekey]` in Markdown, `\cite{citekey}` in LaTeX. In Markdown it is attached only to buffers inside `notes_dir`; in LaTeX it is attached to any buffer of the configured filetypes (LaTeX projects are not notes-tree scoped). Set to `""` to disable it. |
+| `cite.keymaps.open_pdf` | `string` | `"<leader>wp"` | Normal-mode keybinding that opens the PDF of the citation under the cursor in the default system viewer. The citation form is detected per filetype (`[@citekey]` in Markdown, `\cite{citekey}` in LaTeX; locators like `\cite[p. 12]{key}`, suppress-author prefixes (`[-@key]`), and multiple keys (`[@a; @b]` / `\cite{a, b}`) are handled — the key closest to the cursor is used). The citekey is looked up via refree's citekey endpoint and the reference's stored PDF is opened. Set to `""` to disable it. |
+| `cite.keymaps.references` | `string` | `"<leader>wR"` | Normal-mode keybinding that opens a Telescope picker listing every file under the notes directory that references the `[@citekey]` under the cursor (including `[@key, p. 12]`, `[-@key]`, and `[@a; @key]` forms). Selecting an entry opens the referencing file with the cursor on the `@citekey`. Falls back to the key's normal behavior when the cursor is not inside a citation. Attached only in Markdown (pandoc) buffers; not attached for LaTeX. Set to `""` to disable it. |
 
 ## Usage
 
@@ -212,18 +216,22 @@ require("obelisk").setup({
   a path relative to the note, so nested notes get `../assets/…`. Pasting text
   (no image in the clipboard) works exactly as normal. Files outside
   `notes_dir` are never affected.
-- In normal mode inside a note, press `<leader>wc` (the `insert` keymap) to
-  open the citation picker. Type part of a paper's title or an author's name;
-  results stream in live from refree as you type. Selecting an entry inserts
-  `[@citekey]` (e.g. `[@smith2024example]`) at the cursor and leaves you in
-  insert mode right after the closing `]`, so you can keep writing or add a
-  locator like `[@smith2024, p. 12]`. refree must be running for this to work.
-- In normal mode, place the cursor anywhere inside a `[@citekey]` citation
-  (e.g. `[@smith2024]` or `[@smith2024, p. 12]`) and press `<leader>wp` (the
-  `open_pdf` keymap) to open the item's PDF in your system's default viewer.
-  Locators, suppress-author prefixes (`[-@key]`), and multiple citations
-  (`[@a; @b]`) are handled — the key closest to the cursor is used. refree
-  must be running.
+- In normal mode, press `<leader>wc` (the `insert` keymap) to open the
+  citation picker. Type part of a paper's title or an author's name; results
+  stream in live from refree as you type. Selecting an entry inserts a
+  citation at the cursor in the buffer's style: `[@citekey]`
+  (e.g. `[@smith2024example]`) in Markdown, or `\cite{citekey}`
+  (e.g. `\cite{smith2024example}`) in LaTeX, leaving you in insert mode right
+  after the inserted text. In Markdown the keymap attaches only to buffers
+  inside `notes_dir`; in LaTeX it attaches to any `.tex` buffer. refree must
+  be running for this to work.
+- In normal mode, place the cursor anywhere inside a citation —
+  `[@smith2024]` or `[@smith2024, p. 12]` in Markdown, `\cite{smith2024}` or
+  `\cite[p. 12]{smith2024}` in LaTeX — and press `<leader>wp` (the `open_pdf`
+  keymap) to open the item's PDF in your system's default viewer. Locators
+  (`\cite[p. 12]{key}`), suppress-author prefixes (`[-@key]`), and multiple
+  citations (`[@a; @b]` or `\cite{a, b}`) are handled — the key closest to
+  the cursor is used. refree must be running.
 - In normal mode, place the cursor anywhere inside a `[@citekey]` citation
   (e.g. `[@smith2024]` or `[@smith2024, p. 12]`) and press `<leader>wR` (the
   `references` keymap) to open a Telescope picker of every file under the notes
@@ -231,4 +239,4 @@ require("obelisk").setup({
   (`[-@key]`), and multiple citations (`[@a; @b]`) are all matched. Selecting an
   entry opens the referencing file with the cursor placed on the `@citekey`.
   When the cursor is not on a citation the key falls back to its normal
-  behavior.
+  behavior. This keymap is attached only in Markdown (pandoc) buffers.

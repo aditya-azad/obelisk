@@ -66,7 +66,7 @@ M.defaults = {
     },
     cite = {
         enabled = true,
-        filetypes = { "markdown" },
+        filetypes = { "markdown", "tex" },
         base_url = "http://127.0.0.1:23119",
         timeout = 5,
         keymaps = {
